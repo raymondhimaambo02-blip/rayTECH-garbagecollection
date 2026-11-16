@@ -736,7 +736,7 @@ function App(){
   accept:id=>{const r=reqs.find(x=>x.id===id);markAccepted(id);sb.rpc('accept_job',{p_request:String(id)}).then(()=>{});stopAlarm(id);if(r)note(`${r.worker||user.name} accepted the pickup at ${r.addr}.`);setMsg('Job accepted. Manager notified.')},
   add:async f=>{const row={uid:user.id,client:f.client,addr:f.addr,type:f.type,slot:f.slot,notes:f.notes,lat:f.lat,lng:f.lng};let {data,error}=await sb.from('requests').insert({...row,phone:f.phone||null}).select().single();
    if(error&&/phone/i.test(error.message||''))({data,error}=await sb.from('requests').insert(row).select().single());
-   if(error)return fail();merge(data);sb.rpc('auto_assign',{p_request:String(data.id)}).then(()=>{});note(`New pickup request from ${f.client}: ${f.type} at ${f.addr}.`);setMsg('Pickup requested. We will assign a collector soon.')},
+   if(error)return fail();merge(data);sb.rpc('auto_assign',{p_request:String(data.id)}).then(({data:ok,error})=>{if(error)setMsg('Auto-assign error: '+(error.message||error.code)+'. Run auto-assign-fix2.sql in Supabase.');else setMsg(ok?'Pickup requested. Nearby collectors have been alerted.':'Pickup requested. No collector is online nearby yet. We will keep trying.')});note(`New pickup request from ${f.client}: ${f.type} at ${f.addr}.`);setMsg('Pickup requested. We will assign a collector soon.')},
   assign:async(id,name)=>{const w=users.find(u=>u.role==='worker'&&!u.blocked&&u.name===name);const r=reqs.find(x=>x.id===id);
    const {data,error}=await sb.from('requests').update({worker:w?w.name:null,worker_id:w?w.id:null,status:w?'assigned':'requested'}).eq('id',id).select().single();
    if(error)return fail();merge(data);if(w)note(`${w.name} assigned to ${r.addr}.`)},
