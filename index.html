@@ -296,6 +296,14 @@ function Client({st,act,user}){
  const [q,setQ]=useState(''),[fl,setFl]=useState('all');
  const set=k=>e=>setF({...f,[k]:e.target.value});
  const [cd,setCd]=useState(''),[ct,setCt]=useState('');
+ const [sug,setSug]=useState([]);
+ const NOM='https://nominatim.openstreetmap.org/';
+ const short=n=>String(n).split(', ').slice(0,4).join(', ');
+ const geoSearch=async qq=>{try{const r=await fetch(NOM+'search?format=jsonv2&limit=5&countrycodes=zm&accept-language=en&q='+encodeURIComponent(qq));return await r.json()}catch(e){return null}};
+ const revGeo=async(lat,lng)=>{try{const r=await fetch(NOM+'reverse?format=jsonv2&zoom=18&accept-language=en&lat='+lat+'&lon='+lng);const d=await r.json();return d&&d.display_name?short(d.display_name):null}catch(e){return null}};
+ useEffect(()=>{const qq=f.addr.trim();if(f.auto||qq.length<4){setSug([]);return}const t=setTimeout(async()=>{const d=await geoSearch(qq);if(d)setSug(d)},900);return()=>clearTimeout(t)},[f.addr,f.auto]);
+ const pick=p=>{setF(x=>({...x,addr:short(p.display_name),lat:+p.lat,lng:+p.lon,auto:true}));setSug([]);act.toast('Address found and pinned on the map.')};
+ const find=async()=>{const qq=f.addr.trim();if(qq.length<3)return act.toast('Type a street, area or landmark first.');act.toast('Searching…');const d=await geoSearch(qq);if(!d)return act.toast('Search failed. Check your connection.');if(!d.length)return act.toast('No match found. Try a nearby landmark or area name.');setSug(d);act.toast('Choose your address from the list.')};
  const [places,setPlaces]=useState([]);
  useEffect(()=>{sb.from('saved_places').select('*').order('created').then(({data})=>data&&setPlaces(data))},[]);
  const savePlace=async()=>{if(!f.addr.trim())return act.toast('Enter or pin an address first.');const label=(window.prompt('Name this place, for example Home or Shop','Home')||'').trim();if(!label)return;
@@ -312,7 +320,8 @@ function Client({st,act,user}){
  const gps=()=>{
   if(!navigator.geolocation)return act.toast('GPS is not available on this device. Type the address instead.');
   act.toast('Finding your location…');
-  navigator.geolocation.getCurrentPosition(p=>{const lat=p.coords.latitude,lng=p.coords.longitude;setF(x=>({...x,lat,lng,addr:x.addr.trim()?x.addr:'GPS location '+lat.toFixed(5)+', '+lng.toFixed(5)}));act.toast('Location pinned.')},()=>act.toast('Could not get your location. Allow location access or type the address.'),{enableHighAccuracy:true,timeout:15000})};
+  navigator.geolocation.getCurrentPosition(async p=>{const lat=p.coords.latitude,lng=p.coords.longitude;setF(x=>({...x,lat,lng,addr:x.addr.trim()?x.addr:'GPS location '+lat.toFixed(5)+', '+lng.toFixed(5)}));act.toast('Location pinned. Finding the address…');
+   const a=await revGeo(lat,lng);if(a){setF(x=>(!x.addr.trim()||x.addr.startsWith('GPS location')||x.auto)?{...x,addr:a,auto:true}:x);act.toast('Address found: '+a)}else act.toast('Location pinned, but no address was found. Please type it in.')},()=>act.toast('Could not get your location. Allow location access or type the address.'),{enableHighAccuracy:true,timeout:15000})};
  const submit=async()=>{try{localStorage.setItem('my_phone',f.phone||'')}catch(e){}
   if(!f.client.trim()||!f.addr.trim())return act.toast('Enter your name and pickup address.');
   if((cd&&!ct)||(!cd&&ct))return act.toast('Choose both a date and a time, or pick a slot above.');
@@ -327,8 +336,9 @@ function Client({st,act,user}){
    <label>Waste type</label><div className="tiles">{TYPES.map(t=><button key={t} type="button" className={'tile'+(f.type===t?' on':'')} onClick={()=>setF({...f,type:t})}><span>{ICON[t]}</span>{t}</button>)}</div>
    <label htmlFor="n">Your name</label><input id="n" value={f.client} onChange={set('client')} placeholder="e.g. Grace Phiri"/>
    <label htmlFor="ph">Phone / WhatsApp (so your collector can reach you)</label><input id="ph" type="tel" inputMode="tel" value={f.phone||''} onChange={set('phone')} placeholder="e.g. 097 1234567"/>
-   <label htmlFor="a">Pickup address</label><input id="a" value={f.addr} onChange={set('addr')} placeholder="Type street and area"/>
-   <div className="row" style={{marginTop:8,alignItems:'center'}}><button type="button" className="btn alt sm" onClick={gps}>📍 Use my GPS location</button>{f.lat!=null&&<span className="mute">Pinned {f.lat.toFixed(5)}, {f.lng.toFixed(5)} <button className="link" onClick={()=>setF({...f,lat:null,lng:null})}>Clear</button></span>}</div>
+   <label htmlFor="a">Pickup address</label><input id="a" value={f.addr} autoComplete="off" onChange={e=>setF({...f,addr:e.target.value,auto:false,lat:f.auto?null:f.lat,lng:f.auto?null:f.lng})} placeholder="Type street, area or landmark"/>
+   {sug.length>0&&<div className="card" style={{padding:6,margin:'6px 0 0'}} role="listbox" aria-label="Address suggestions">{sug.map(p=><button key={p.place_id} type="button" role="option" className="note" style={{width:'100%',background:'none',border:0,textAlign:'left',cursor:'pointer',color:'var(--ink)',alignItems:'flex-start'}} onClick={()=>pick(p)}><span>📍</span><span>{short(p.display_name)}</span></button>)}<div className="mute" style={{padding:'4px 8px',fontSize:12}}>Results © OpenStreetMap</div></div>}
+   <div className="row" style={{marginTop:8,alignItems:'center'}}><button type="button" className="btn alt sm" onClick={gps}>📍 Use my GPS location</button><button type="button" className="btn alt sm" onClick={find}>🔍 Find address</button>{f.lat!=null&&<span className="mute">Pinned {f.lat.toFixed(5)}, {f.lng.toFixed(5)} <button className="link" onClick={()=>setF({...f,lat:null,lng:null})}>Clear</button></span>}</div>
    <label>Saved places</label><div className="chips">{places.map(p=><span key={p.id} style={{display:'inline-flex',alignItems:'center'}}><button type="button" className="chip" onClick={()=>{setF({...f,addr:p.addr,lat:p.lat,lng:p.lng});act.toast(p.label+' selected.')}}>{/shop/i.test(p.label)?'🏪':/home/i.test(p.label)?'🏠':'📌'} {p.label}</button><button type="button" className="x" style={{fontSize:16}} aria-label={'Remove '+p.label} onClick={()=>delPlace(p)}>×</button></span>)}<button type="button" className="chip" onClick={savePlace}>💾 Save this address</button></div>
    <label>Time slot</label><Chips val={f.slot} set={v=>{setF({...f,slot:v});setCd('');setCt('')}} opts={['Today 10:00–12:00','Today 14:00–16:00','Tomorrow 08:00–10:00','Tomorrow 12:00–14:00'].map(x=>[x,x])}/>
    <div className="mute" style={{margin:'4px 0'}}>Or choose your own date and time:</div>
