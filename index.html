@@ -169,6 +169,7 @@ const PUSH=!OS_ID.startsWith('YOUR_');
 let AUDIO_CTX=null,ALARM_T=null,WAKE=null;const PENDING=new Set();
 const unlockAudio=()=>{try{AUDIO_CTX=AUDIO_CTX||new (window.AudioContext||window.webkitAudioContext)();if(AUDIO_CTX.state==='suspended')AUDIO_CTX.resume()}catch(e){}
  try{ensureAudio();if(!RING._p){RING._p=1;RING.muted=true;RING.play().then(()=>{RING.pause();RING.currentTime=0;RING.muted=false}).catch(()=>{RING.muted=false})}}catch(e){}
+ try{if(window.speechSynthesis&&!window.__sp){window.__sp=1;const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u)}}catch(e){}
  keepAlive()};
 // ---- Ringtone built as real audio files (WAV), so it keeps playing when the screen is locked ----
 const mkWav=(notes,total,rate=22050)=>{const n=Math.floor(total*rate),f=new Float32Array(n);
@@ -266,7 +267,7 @@ const lk=t=>String(t).split(/(https?:\/\/\S+)/).map((x,i)=>/^https?:/.test(x)?<a
 const dlCsv=(rows,name)=>{const b=new Blob([rows.map(x=>x.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click()};
 
 function NavPanel({r,me,onRoute,alertFn}){
- const [route,setRoute]=useState(null);const [idx,setIdx]=useState(0);const [voice,setVoice]=useState(false);
+ const [route,setRoute]=useState(null);const [idx,setIdx]=useState(0);const [voice,setVoice]=useState(()=>{try{return localStorage.getItem('voice_on')!=='0'}catch(e){return true}});
  const [show,setShow]=useState(false);const [msg,setMsg]=useState('');
  const ref=React.useRef({said:{},last:0,off:0,busy:false,idx:0,route:null});
  const hasD=r.lat!=null;
@@ -297,7 +298,8 @@ function NavPanel({r,me,onRoute,alertFn}){
   else if(dm<=40&&!said[key+'d']){said[key+'d']=1;say(arrive?t:t+' now')}
  },[me&&me.lat,me&&me.lng]);
  // voice toggle must come from a tap so phones allow speech
- const toggle=()=>{const on=!voice;VOICE_ON=on;setVoice(on);
+ useEffect(()=>{VOICE_ON=voice;if(voice)say('Voice directions on')},[]);
+ const toggle=()=>{const on=!voice;VOICE_ON=on;setVoice(on);try{localStorage.setItem('voice_on',on?'1':'0')}catch(e){}
   if(on){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance('Voice directions on');u.lang='en-GB';speechSynthesis.speak(u)}catch(e){setMsg('Voice is not supported on this browser.')}}else{try{speechSynthesis.cancel()}catch(e){}}};
  useEffect(()=>()=>{VOICE_ON=false;try{speechSynthesis.cancel()}catch(e){}},[]);
  // keep the screen awake while navigating
