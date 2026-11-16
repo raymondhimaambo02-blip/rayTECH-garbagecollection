@@ -494,9 +494,14 @@ function Client({st,act,user}){
  useEffect(()=>{mine.forEach(r=>{const o=SEEN[r.id];if(o&&o!==r.status){chimeOnce();act.toast(({assigned:'A collector was assigned to your pickup 👷',enroute:'Your collector is on the way 🚛',collected:'Pickup complete. Thank you! ♻️'})[r.status]||'Pickup updated')}SEEN[r.id]=r.status})},[mine.map(r=>r.id+r.status).join()]);
  const gps=()=>{
   if(!navigator.geolocation)return act.toast('GPS is not available on this device. Type the address instead.');
-  act.toast('Finding your location…');
-  navigator.geolocation.getCurrentPosition(async p=>{const lat=p.coords.latitude,lng=p.coords.longitude;HOME={lat,lng};setF(x=>({...x,lat,lng,addr:x.addr.trim()?x.addr:'GPS location '+lat.toFixed(5)+', '+lng.toFixed(5)}));act.toast('Location pinned. Finding the address…');
-   const a=await revGeo(lat,lng);if(a){setF(x=>(!x.addr.trim()||x.addr.startsWith('GPS location')||x.auto)?{...x,addr:a,auto:true}:x);act.toast('Address found: '+a)}else act.toast('Location pinned, but no address was found. Please type it in.')},()=>act.toast('Could not get your location. Allow location access or type the address.'),{enableHighAccuracy:true,timeout:15000})};
+  act.toast('Getting your exact location…');let best=null,done=false,w=null,t=null;
+  const fin=()=>{if(done)return;done=true;clearTimeout(t);if(w!=null)navigator.geolocation.clearWatch(w);
+   if(!best)return act.toast('Could not get your location. Allow location access, and go outside or near a window.');
+   const lat=best.latitude,lng=best.longitude,ac=Math.round(best.accuracy);HOME={lat,lng};
+   setF(x=>({...x,lat,lng,auto:false,addr:(!x.addr.trim()||x.addr.startsWith('GPS location')||x.auto)?'GPS location '+lat.toFixed(6)+', '+lng.toFixed(6):x.addr}));
+   act.toast(ac<=25?'Exact location pinned (accurate to about '+ac+' m).':'Pinned, but the GPS signal is weak (about '+ac+' m). Move outside, or fine-tune with Pin on map.')};
+  w=navigator.geolocation.watchPosition(p=>{if(!best||p.coords.accuracy<best.accuracy)best={latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy};if(p.coords.accuracy<=10)fin();else act.toast('Improving accuracy… about '+Math.round(best.accuracy)+' m')},()=>fin(),{enableHighAccuracy:true,maximumAge:0,timeout:20000});
+  t=setTimeout(fin,15000)};
  const submit=async()=>{try{localStorage.setItem('my_phone',f.phone||'')}catch(e){}
   if(!f.client.trim()||!f.addr.trim())return act.toast('Enter your name and pickup address.');
   if((cd&&!ct)||(!cd&&ct))return act.toast('Choose both a date and a time, or pick a slot above.');
