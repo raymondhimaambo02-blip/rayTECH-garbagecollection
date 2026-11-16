@@ -206,6 +206,8 @@ const fmt=m=>m<1000?Math.round(m)+' m':(m/1000).toFixed(1)+' km';
 const telHref=n=>{let d=String(n||'').replace(/[^\d+]/g,'');if(d[0]==='+')return 'tel:'+d;if(d.startsWith('260'))return 'tel:+'+d;if(d[0]==='0')return 'tel:+260'+d.slice(1);return 'tel:'+d};
 const normPhone=n=>{let d=String(n||'').replace(/\D/g,'');if(d.startsWith('260')&&d.length===12)d='0'+d.slice(3);return d};
 const okPhone=n=>/^0[79]\d{8}$/.test(normPhone(n));
+const maskPhone=n=>{const d=normPhone(n);return d.length===10?d.slice(0,3)+'••••'+d.slice(7):''};
+const inferProv=n=>{const x=normPhone(n).slice(0,3);return (x==='096'||x==='076')?'MTN MoMo':(x==='097'||x==='077')?'Airtel Money':(x==='095'||x==='075')?'Zamtel Kwacha':null};
 const CALL_BTN={display:'inline-block',marginTop:8,marginRight:8,textDecoration:'none',textAlign:'center'};
 const mapUrl=r=>r.lat!=null?`https://www.google.com/maps/dir/?api=1&destination=${r.lat},${r.lng}`:`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.addr)}`;
 function Nav({r}){return <a className="btn alt sm" style={{display:'inline-block',marginTop:12,textDecoration:'none'}} href={mapUrl(r)} target="_blank" rel="noopener">Navigate in Maps</a>}
@@ -307,13 +309,15 @@ function Client({st,act,user}){
    <Search v={q} set={v=>{setQ(v);pg.reset()}} ph="Search address, type or collector"/>
    <Chips val={fl} set={v=>{setFl(v);pg.reset()}} opts={[['all','All',mine.length],['active','Active',act1.length],['done','Completed',dn.length]]}/>
    {list.length===0&&<div className="card empty">{mine.length?'No pickups match.':'No pickups yet. Request one to get started.'}</div>}
-   {pg.items.map(r=><PCard key={r.id} r={r}><PayBox r={r} st={st} act={act}/>{r.status==='collected'&&<button className="btn alt sm" style={{marginTop:12}} onClick={()=>again(r)}>🔁 Request again</button>}</PCard>)}
+   {pg.items.map(r=><PCard key={r.id} r={r}><PayBox r={r} st={st} act={act} user={user}/>{r.status==='collected'&&<button className="btn alt sm" style={{marginTop:12}} onClick={()=>again(r)}>🔁 Request again</button>}</PCard>)}
    {pg.pager}</div>}
  </div>
 }
 
-function PhoneCard({user,act}){const [v,setV]=useState(user.phone||'');const same=(user.phone||'')===normPhone(v);
- return <div className="card"><h3>📞 Your phone number</h3><div className="mute">Used for the Call button, so your collector or client can reach you. Update it here any time.</div><div className="row" style={{marginTop:8,gap:8}}><input type="tel" inputMode="tel" maxLength="13" value={v} onChange={e=>setV(e.target.value)} placeholder="10 digits, e.g. 0977123456" style={{flex:1}}/><button className="btn sm" disabled={same||!okPhone(v)} onClick={()=>act.setPhone(normPhone(v))}>Save</button></div></div>}
+function PhoneCard({user,act}){const [ed,setEd]=useState(!okPhone(user.phone)),[v,setV]=useState('');
+ return <div className="card"><h3>📞 Your phone number</h3><div className="mute">Saved once and used everywhere in the app: Call buttons, payments and payouts.</div>
+  {!ed&&<div className="row" style={{alignItems:'center',marginTop:8}}><span><b>{maskPhone(user.phone)}</b></span><button className="link" onClick={()=>{setV('');setEd(true)}}>Change</button></div>}
+  {ed&&<div className="row" style={{marginTop:8,gap:8}}><input type="tel" inputMode="tel" maxLength="13" value={v} onChange={e=>setV(e.target.value)} placeholder="10 digits, e.g. 0977123456" style={{flex:1}}/><button className="btn sm" disabled={!okPhone(v)} onClick={async()=>{if(await act.setPhone(normPhone(v))){setV('');setEd(false)}}}>Save</button>{okPhone(user.phone)&&<button className="link" onClick={()=>setEd(false)}>Cancel</button>}</div>}</div>}
 function Worker({st,act,user}){
  const who=user.name;
  const mine=st.reqs.filter(r=>r.worker===who&&r.status!=='collected');
@@ -413,11 +417,11 @@ function ClientRow({u,reqs}){
   {o&&<div className="pc-b">{reqs.length===0&&<div className="mute">No pickups yet.</div>}{reqs.map(r=><div className="note" key={r.id}><span>{ICON[r.type]||'🗑️'}</span><div style={{flex:1}}><b>{r.type}</b><div className="mute">{r.addr} · {ago(T(r))}</div></div><span className={'pill '+r.status}>{SHORT[r.status]}</span></div>)}</div>}</div>}
 
 const fK=v=>'K'+Number(v||0).toLocaleString();
-function PayBox({r,st,act}){
+function PayBox({r,st,act,user}){
  const ps=st.pays.filter(p=>p.request_id===String(r.id));
  const sm=s=>ps.filter(p=>p.status===s).reduce((a,p)=>a+p.amount,0);
  const paid=sm('confirmed'),pend=sm('pending'),rej=ps.some(p=>p.status==='rejected')&&!pend&&!paid;
- const [o,setO]=useState(false),[man,setMan]=useState(!MOMO_LIVE),[prov,setProv]=useState(PROV[0]),[ph,setPh]=useState(''),[ref,setRef]=useState(''),[am,setAm]=useState(''),[busy,setBusy]=useState(false),[pid,setPid]=useState(null);
+ const [o,setO]=useState(false),[man,setMan]=useState(!MOMO_LIVE),[prov,setProv]=useState((user&&inferProv(user.phone))||PROV[0]),[ph,setPh]=useState(user&&okPhone(user.phone)?normPhone(user.phone):''),[chg,setChg]=useState(false),[ref,setRef]=useState(''),[am,setAm]=useState(''),[busy,setBusy]=useState(false),[pid,setPid]=useState(null);
  const cur=pid&&st.pays.find(p=>p.id===pid);
  useEffect(()=>{if(!pid||(cur&&cur.status!=='pending'))return;const t=setInterval(()=>act.refreshPay(pid),5000);return()=>clearInterval(t)},[pid,cur&&cur.status]);
  useEffect(()=>{if(!cur)return;if(cur.status==='confirmed'){act.toast('Payment received. Thank you!');setPid(null);setO(false);setAm('')}else if(cur.status==='rejected'){act.toast('Payment was not approved. You can try again.');setPid(null)}},[cur&&cur.status]);
@@ -437,29 +441,29 @@ function PayBox({r,st,act}){
     <Chips val={prov} set={setProv} opts={PROV.map(x=>[x,x])}/>
     <div className="mute" style={{marginBottom:6}}>Send money to <b style={{font:'700 15px Figtree',letterSpacing:0}}>{to||'the RayTECH mobile money number'}</b> on {prov}, then enter the details below.</div>
     <label htmlFor={'ma'+r.id}>Amount you paid (ZMW)</label><input id={'ma'+r.id} type="number" min="1" inputMode="decimal" value={am} onChange={e=>setAm(e.target.value)} placeholder="e.g. 75"/>
-    <label htmlFor={'mp'+r.id}>Your mobile money number</label><input id={'mp'+r.id} type="tel" inputMode="tel" value={ph} onChange={e=>setPh(e.target.value)} placeholder="e.g. 0961234567"/>
+    {ph&&!chg?<div className="row" style={{alignItems:'center',margin:'8px 0'}}><span>Paying from <b>{maskPhone(ph)}</b></span><button className="link" onClick={()=>{setPh('');setChg(true)}}>Use another number</button></div>:<div><label htmlFor={'mp'+r.id}>Your mobile money number</label><input id={'mp'+r.id} type="tel" inputMode="tel" value={ph} onChange={e=>setPh(e.target.value)} placeholder="e.g. 0961234567"/></div>}
     <label htmlFor={'mr'+r.id}>Transaction ID</label><input id={'mr'+r.id} value={ref} onChange={e=>setRef(e.target.value)} placeholder="From the confirmation SMS"/>
     <div className="row" style={{marginTop:12}}><button className="btn sm" disabled={busy} onClick={send}>{busy?'Sending…':'I have paid'}</button>{MOMO_LIVE?<button className="btn alt sm" onClick={()=>setMan(false)}>Back</button>:<button className="btn alt sm" onClick={()=>setO(false)}>Cancel</button>}</div></div>
    :<div>
     <div className="mute" style={{marginBottom:6}}>Your payment goes to your collector. You will get a PIN prompt on your phone.</div>
     <Chips val={prov} set={setProv} opts={PROV.map(x=>[x,x])}/>
     <label htmlFor={'ma'+r.id}>Amount (ZMW)</label><input id={'ma'+r.id} type="number" min="1" inputMode="decimal" value={am} onChange={e=>setAm(e.target.value)} placeholder="Type any amount, e.g. 75"/>
-    <label htmlFor={'mp'+r.id}>Your mobile money number</label><input id={'mp'+r.id} type="tel" inputMode="tel" value={ph} onChange={e=>setPh(e.target.value)} placeholder="e.g. 0961234567"/>
+    {ph&&!chg?<div className="row" style={{alignItems:'center',margin:'8px 0'}}><span>Paying from <b>{maskPhone(ph)}</b></span><button className="link" onClick={()=>{setPh('');setChg(true)}}>Use another number</button></div>:<div><label htmlFor={'mp'+r.id}>Your mobile money number</label><input id={'mp'+r.id} type="tel" inputMode="tel" value={ph} onChange={e=>setPh(e.target.value)} placeholder="e.g. 0961234567"/></div>}
     <div className="row" style={{marginTop:12}}><button className="btn sm" disabled={busy} onClick={pin}>{busy?'Sending prompt…':'Send PIN prompt'}</button><button className="btn alt sm" onClick={()=>setO(false)}>Cancel</button></div>
     <button className="link" style={{marginTop:8}} onClick={()=>setMan(true)}>Already paid by sending money? Enter the transaction ID</button></div>}
   </div>}</div>}
 
 function PayoutCard({user,act,st}){
- const [ph,setPh]=useState(user.payout_msisdn||''),[pv,setPv]=useState(user.payout_provider||PROV[0]),[ed,setEd]=useState(!user.payout_msisdn);
+ const want=okPhone(user.phone)?normPhone(user.phone):'',prov=inferProv(want)||PROV[0];
+ const [pv,setPv]=useState(user.payout_provider||prov),[ed,setEd]=useState(false);
  const mine=st.pouts.filter(p=>p.kind==='collector'),sum=f=>mine.filter(f).reduce((a,p)=>a+p.amount,0);
  const got=sum(p=>p.status==='completed'),wait=sum(p=>p.status==='pending'||p.status==='processing');
+ useEffect(()=>{if(want&&(normPhone(user.payout_msisdn)!==want||!user.payout_provider))act.setPayout(want,user.payout_provider||prov,true)},[want,user.payout_msisdn]);
  return <div className="card"><h3 style={{marginBottom:4}}>💰 Earnings</h3>
   <div className="mute">Received {fK(got)}{wait>0?' · '+fK(wait)+' on the way':''}</div>
-  {!ed&&<div className="row" style={{alignItems:'center',marginTop:8}}><span>Payouts go to <b>{user.payout_msisdn}</b> ({user.payout_provider})</span><button className="link" onClick={()=>setEd(true)}>Change</button></div>}
-  {ed&&<div style={{marginTop:8}}>{!user.payout_msisdn&&<div style={{color:'var(--red)',marginBottom:6}}>Add your mobile money number so clients can pay you.</div>}
-   <Chips val={pv} set={setPv} opts={PROV.map(x=>[x,x])}/>
-   <label htmlFor="pom">Your mobile money number</label><input id="pom" type="tel" inputMode="tel" value={ph} onChange={e=>setPh(e.target.value)} placeholder="e.g. 0971234567"/>
-   <button className="btn sm" style={{marginTop:10}} onClick={async()=>{if(ph.replace(/\D/g,'').length<9)return act.toast('Enter a valid mobile money number.');await act.setPayout(ph.trim(),pv);setEd(false)}}>Save payout number</button></div>}</div>}
+  {!want&&<div style={{color:'var(--red)',marginTop:8}}>Save your phone number in the card below to receive payouts.</div>}
+  {want&&!ed&&<div className="row" style={{alignItems:'center',marginTop:8}}><span>Payouts go to <b>{maskPhone(want)}</b> ({user.payout_provider||prov})</span><button className="link" onClick={()=>{setPv(user.payout_provider||prov);setEd(true)}}>Change network</button></div>}
+  {want&&ed&&<div style={{marginTop:8}}><Chips val={pv} set={setPv} opts={PROV.map(x=>[x,x])}/><button className="btn sm" style={{marginTop:10}} onClick={async()=>{await act.setPayout(want,pv);setEd(false)}}>Save network</button></div>}</div>}
 
 function Sales({st,act}){
  const [m,setM]=useState('day');
@@ -700,7 +704,7 @@ function App(){
    gone.forEach(stopAlarm);setReqs(p=>p.filter(x=>!gone.includes(x.id)));
    sb.storage.from('proofs').remove(gone.map(i=>i+'.jpg')).then(()=>{});
    setMsg(gone.length===1?'Pickup deleted.':gone.length+' pickups deleted.')},
-  setPhone:async p=>{const {error}=await sb.rpc('set_my_phone',{p_phone:p});if(error)return setMsg('Run phone-numbers.sql in Supabase once, then try again.');setUser(u=>({...u,phone:p}));setMsg('Phone number saved.')},
+  setPhone:async p=>{const {error}=await sb.rpc('set_my_phone',{p_phone:p});if(error){setMsg('Run phone-numbers.sql in Supabase once, then try again.');return false}setUser(u=>({...u,phone:p}));setMsg('Phone number saved.');return true},
   accept:id=>{const r=reqs.find(x=>x.id===id);markAccepted(id);stopAlarm(id);sb.rpc('accept_job',{p_request:String(id)}).then(()=>{});if(r)note(`${r.worker||user.name} accepted the pickup at ${r.addr}.`);setMsg('Job accepted. Manager notified.')},
   add:async f=>{const {data,error}=await sb.from('requests').insert({uid:user.id,client:f.client,addr:f.addr,type:f.type,slot:f.slot,notes:f.notes,lat:f.lat,lng:f.lng,client_phone:normPhone(f.phone)||null}).select().single();
    if(error)return fail();merge(data);note(`New pickup request from ${f.client}: ${f.type} at ${f.addr}.`);
@@ -744,7 +748,7 @@ function App(){
    const {data:row}=await sb.from('payments').select('*').eq('id',data.payment_id).maybeSingle();if(row)setPays(p=>[toPay(row),...p.filter(x=>x.id!==row.id)]);
    setMsg('Check your phone and enter your mobile money PIN.');return data.payment_id},
   refreshPay:async id=>{const {data}=await sb.from('payments').select('*').eq('id',id).maybeSingle();if(data)setPays(p=>[toPay(data),...p.filter(x=>x.id!==data.id)])},
-  setPayout:async(msisdn,provider)=>{const {error}=await sb.rpc('set_my_payout',{p_msisdn:msisdn,p_provider:provider});if(error)return setMsg('Run momo-payments.sql in Supabase once, then try again.');setUser(u=>({...u,payout_msisdn:msisdn,payout_provider:provider}));setMsg('Payout number saved.')},
+  setPayout:async(msisdn,provider,silent)=>{const {error}=await sb.rpc('set_my_payout',{p_msisdn:msisdn,p_provider:provider});if(error){if(!silent)setMsg('Run momo-payments.sql in Supabase once, then try again.');return}setUser(u=>({...u,payout_msisdn:msisdn,payout_provider:provider}));if(!silent)setMsg('Payout network saved.')},
   retryPayout:async id=>{const {data,error}=await sb.functions.invoke('pay-callback',{body:{action:'retry',payout_id:id}});if(error||(data&&data.error))return setMsg('Retry failed. Try again.');setMsg('Payout retried.')},
   payOk:async(id,status)=>{const {data,error}=await sb.from('payments').update({status,confirmed:new Date().toISOString()}).eq('id',id).select().single();if(error)return fail();setPays(p=>p.map(x=>x.id===id?toPay(data):x));setMsg(status==='confirmed'?'Payment confirmed.':'Payment rejected.')},
   setRole:(id,role)=>sb.from('profiles').update({role}).eq('id',id).select().then(({data,error})=>{if(error||!data||!data.length)return setMsg('Could not change the role. Run block-users.sql in Supabase once.');setUsers(p=>p.map(x=>x.id===id?{...x,...data[0]}:x));setMsg('Role updated.')}),
