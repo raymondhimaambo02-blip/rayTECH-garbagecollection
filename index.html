@@ -175,9 +175,8 @@ const STEPS=['requested','assigned','enroute','collected'];
 const LABEL={requested:'Requested',assigned:'Assigned',enroute:'On the way',collected:'Collected'};
 const TYPES=['Household','Recyclables','Garden waste','Bulky items','Commercial'];
 const PROV=['MTN MoMo','Airtel Money','Zamtel Kwacha'];
-// Set the numbers customers pay to, and the price (ZMW) of each pickup type:
+// Set the numbers customers pay to (leave a name empty if you do not use that network):
 const PAY_TO={'MTN MoMo':'','Airtel Money':'','Zamtel Kwacha':''};
-const PRICE={Household:50,Recyclables:40,'Garden waste':60,'Bulky items':120,Commercial:200};
 const toPay=p=>({...p,amount:Number(p.amount),created:+new Date(p.created)});
 const WORKERS=['Chanda M.','Mwila K.','Bwalya T.'];
 const now=()=>new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
@@ -272,7 +271,7 @@ function Client({st,act,user}){
   {onway&&<button className="card live" onClick={()=>{setTab('mine');setFl('active')}}>🚛 <b>{onway.worker||'Your collector'}</b> is on the way to {onway.addr} <u>Track now</u></button>}
   <div className="seg" role="tablist"><button className={tab==='new'?'on':''} onClick={()=>setTab('new')}>➕ New pickup</button><button className={tab==='mine'?'on':''} onClick={()=>setTab('mine')}>📋 My pickups{act1.length>0&&<span className="badge">{act1.length}</span>}</button></div>
   {tab==='new'&&<div className="card"><h2>Request a pickup</h2>
-   <label>Waste type</label><div className="tiles">{TYPES.map(t=><button key={t} type="button" className={'tile'+(f.type===t?' on':'')} onClick={()=>setF({...f,type:t})}><span>{ICON[t]}</span>{t}<small>K{PRICE[t]}</small></button>)}</div>
+   <label>Waste type</label><div className="tiles">{TYPES.map(t=><button key={t} type="button" className={'tile'+(f.type===t?' on':'')} onClick={()=>setF({...f,type:t})}><span>{ICON[t]}</span>{t}</button>)}</div>
    <label htmlFor="n">Your name</label><input id="n" value={f.client} onChange={set('client')} placeholder="e.g. Grace Phiri"/>
    <label htmlFor="a">Pickup address</label><input id="a" value={f.addr} onChange={set('addr')} placeholder="Type street and area"/>
    <div className="row" style={{marginTop:8,alignItems:'center'}}><button type="button" className="btn alt sm" onClick={gps}>📍 Use my GPS location</button>{f.lat!=null&&<span className="mute">Pinned {f.lat.toFixed(5)}, {f.lng.toFixed(5)} <button className="link" onClick={()=>setF({...f,lat:null,lng:null})}>Clear</button></span>}</div>
@@ -379,19 +378,18 @@ function PayBox({r,st,act}){
  const ps=st.pays.filter(p=>p.request_id===String(r.id));
  const sm=s=>ps.filter(p=>p.status===s).reduce((a,p)=>a+p.amount,0);
  const paid=sm('confirmed'),pend=sm('pending'),rej=ps.some(p=>p.status==='rejected')&&!pend&&!paid;
- const price=PRICE[r.type]||0,left=Math.max(price-paid-pend,0)||price;
  const [o,setO]=useState(false),[prov,setProv]=useState(PROV[0]),[ph,setPh]=useState(''),[ref,setRef]=useState(''),[am,setAm]=useState(''),[busy,setBusy]=useState(false);
  const to=PAY_TO[prov];
- const send=async()=>{const a=Number(am||left);if(!(a>0))return act.toast('Enter an amount.');if(ph.replace(/\D/g,'').length<9)return act.toast('Enter the mobile money number you paid from.');if(ref.trim().length<4)return act.toast('Enter the transaction ID from your payment message.');setBusy(true);const ok=await act.pay(r,{provider:prov,phone:ph.trim(),ref:ref.trim(),amount:a});setBusy(false);if(ok){setO(false);setAm('');setRef('')}};
+ const send=async()=>{const a=Number(am);if(!(a>0))return act.toast('Type the amount you paid.');if(ph.replace(/\D/g,'').length<9)return act.toast('Enter the mobile money number you paid from.');if(ref.trim().length<4)return act.toast('Enter the transaction ID from your payment message.');setBusy(true);const ok=await act.pay(r,{provider:prov,phone:ph.trim(),ref:ref.trim(),amount:a});setBusy(false);if(ok){setO(false);setAm('');setRef('')}};
  return <div>
-  {paid>0&&<div className="paid">✅ Paid {fK(paid)}{paid<price?` · suggested balance ${fK(price-paid)}`:''}</div>}
+  {paid>0&&<div className="paid">✅ Paid {fK(paid)}</div>}
   {pend>0&&<div className="paid wait">⏳ {fK(pend)} sent. Waiting for confirmation.</div>}
   {rej&&<div className="paid bad">Your last payment was rejected. Check the details and try again.</div>}
-  {!o&&paid<price&&<button className="btn warn sm" style={{marginTop:12}} onClick={()=>setO(true)}>📱 Pay with mobile money (optional)</button>}
+  {!o&&<button className="btn warn sm" style={{marginTop:12}} onClick={()=>setO(true)}>📱 Pay with mobile money</button>}
   {o&&<div className="codebox"><b style={{font:'700 16px Figtree',letterSpacing:0}}>Pay by mobile money</b>
    <Chips val={prov} set={setProv} opts={PROV.map(x=>[x,x])}/>
    <div className="mute" style={{marginBottom:6}}>Send money to <b style={{font:'700 15px Figtree',letterSpacing:0}}>{to||'the RayTECH mobile money number'}</b> on {prov}, then enter the details below.</div>
-   <label htmlFor={'ma'+r.id}>Amount (ZMW). Pay any amount you choose</label><input id={'ma'+r.id} type="number" min="1" inputMode="decimal" value={am} onChange={e=>setAm(e.target.value)} placeholder={'Suggested '+fK(left)}/>
+   <label htmlFor={'ma'+r.id}>Amount you paid (ZMW)</label><input id={'ma'+r.id} type="number" min="1" inputMode="decimal" value={am} onChange={e=>setAm(e.target.value)} placeholder="Type the amount, e.g. 75"/>
    <label htmlFor={'mp'+r.id}>Your mobile money number</label><input id={'mp'+r.id} type="tel" inputMode="tel" value={ph} onChange={e=>setPh(e.target.value)} placeholder="e.g. 0961234567"/>
    <label htmlFor={'mr'+r.id}>Transaction ID</label><input id={'mr'+r.id} value={ref} onChange={e=>setRef(e.target.value)} placeholder="From the confirmation SMS"/>
    <div className="row" style={{marginTop:12}}><button className="btn sm" disabled={busy} onClick={send}>{busy?'Sending…':'I have paid'}</button><button className="btn alt sm" onClick={()=>setO(false)}>Cancel</button></div></div>}</div>}
@@ -629,7 +627,7 @@ function App(){
    setMsg(status==='collected'?'Collected. Manager notified.':'Trip started. Client can now track you.')}catch(e){fail()}},
   pos:(id,lat,lng)=>{const t=Date.now();if(t-lastPos<4000)return;lastPos=t;sb.from('requests').update({pos:{lat,lng,t}}).eq('id',id).then(()=>{})},
   read:()=>{setNotes(n=>n.map(x=>({...x,read:true})));sb.from('notifications').update({is_read:true}).eq('is_read',false).then(()=>{})},
-  pay:async(r,d)=>{const {data,error}=await sb.from('payments').insert({request_id:String(r.id),client:r.client,amount:Number(d.amount)||PRICE[r.type]||0,provider:d.provider,phone:d.phone,ref:d.ref}).select().single();
+  pay:async(r,d)=>{const {data,error}=await sb.from('payments').insert({request_id:String(r.id),client:r.client,amount:Number(d.amount),provider:d.provider,phone:d.phone,ref:d.ref}).select().single();
    if(error){const m=(error.message||'')+' '+(error.code||'');setMsg(/PGRST205|42P01|schema cache|does not exist/i.test(m)?'Payments table is missing. Run payments.sql in Supabase, then reload.':'Payment failed: '+(error.message||'unknown error'));return false}
    setPays(p=>[toPay(data),...p.filter(x=>x.id!==data.id)]);note(`${r.client} paid K${data.amount} via ${d.provider} (ID ${d.ref}) for ${r.addr}. Confirm it under Sales.`);setMsg('Payment sent. We will confirm it shortly.');return true},
   payOk:async(id,status)=>{const {data,error}=await sb.from('payments').update({status,confirmed:new Date().toISOString()}).eq('id',id).select().single();if(error)return fail();setPays(p=>p.map(x=>x.id===id?toPay(data):x));setMsg(status==='confirmed'?'Payment confirmed.':'Payment rejected.')},
