@@ -477,7 +477,7 @@ function Client({st,act,user}){
    .sort((a,b)=>a.m-b.m||a.d-b.d).slice(0,8).map(x=>({...x,d:HOME?x.d:null}))};
  const revGeo=async(lat,lng)=>{const n=await getJ(NOM+'reverse?format=jsonv2&zoom=18&accept-language=en&lat='+lat+'&lon='+lng);if(n&&n.display_name)return short(n.display_name);
   const r=fromPhoton(await getJ(PH+'reverse?lang=en&lat='+lat+'&lon='+lng));return r.length?short(r[0].display_name):null};
- useEffect(()=>{const qq=f.addr.trim();if(f.auto||qq.length<3){setSug([]);setSMsg('');return}setSMsg('Searching…');
+ useEffect(()=>{const qq=f.addr.trim();if(f.auto||qq.length<3||/^(GPS|Pinned) location/.test(qq)){setSug([]);setSMsg('');return}setSMsg('Searching…');
   const t=setTimeout(async()=>{const d=await geoSearch(qq);if(d===null){setSMsg('Address search is unavailable. Check your connection, or type the address in full.');return}setSug(d);setSMsg(d.length?'':'No matches yet. Try an area or landmark name.')},800);return()=>clearTimeout(t)},[f.addr,f.auto]);
  const pick=p=>{setF(x=>({...x,addr:short(p.display_name),lat:+p.lat,lng:+p.lon,auto:true,conf:false}));setSug([]);setSMsg('');act.toast('Check the pin and drag it to your exact spot.');setPin(true)};
  const find=async()=>{const qq=f.addr.trim();if(qq.length<3)return act.toast('Type a street, area or landmark first.');act.toast('Searching…');const d=await geoSearch(qq);if(d===null)return act.toast('Search failed. Check your connection.');if(!d.length)return act.toast('No match found. Try a nearby landmark or area name.');setSug(d);act.toast('Choose your address from the list.')};
