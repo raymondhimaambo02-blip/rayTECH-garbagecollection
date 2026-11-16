@@ -126,11 +126,19 @@ header,.auth>.brand{background:color-mix(in srgb,var(--card) 88%,transparent);-w
 .arr{margin-top:10px;padding:10px 12px;border-radius:10px;background:#CDEBDA;color:#14472D;font-weight:600;animation:fd .3s ease}
 .stars{display:flex;gap:4px;margin-top:12px;align-items:center;flex-wrap:wrap}.stars button{border:0;background:none;font-size:28px;line-height:1;cursor:pointer;color:var(--line);padding:0 2px;transition:transform .1s}.stars button.on{color:var(--amber)}.stars button:hover{transform:scale(1.2)}
 .lmap{position:relative;border-radius:12px;overflow:hidden;border:1px solid var(--line)}.lmap>div:first-child{height:260px;z-index:0}
+.navcard{background:var(--moss);color:var(--moss-ink);border-radius:14px;padding:12px 14px;margin:10px 0;display:flex;gap:14px;align-items:center}
+.navcard .ar{font-size:44px;line-height:1;width:56px;text-align:center;flex:none}
+.navcard .nd{font:700 22px 'Bricolage Grotesque',sans-serif;line-height:1.1}.navcard .nt{font-weight:600;line-height:1.25;margin-top:2px}
+.navbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+.navbar .mute{flex:1;min-width:120px}
+.steps{margin:8px 0 0;padding-left:20px;font-size:14px}.steps li{margin-bottom:6px}.steps li.now{font-weight:700;color:var(--moss)}
 .recen{position:absolute;right:10px;bottom:22px;z-index:500;box-shadow:0 2px 8px rgba(0,0,0,.3)}
 .mk{position:relative;width:40px;height:40px;border-radius:50%;background:var(--card);border:3px solid var(--moss);display:grid;place-items:center;font-size:20px;box-shadow:0 2px 8px rgba(0,0,0,.3)}.mk.home{border-color:var(--amber)}
 .mk.car:after{content:'';position:absolute;inset:-3px;border-radius:50%;border:3px solid var(--moss);animation:pl 1.6s ease-out infinite}
 @media(prefers-color-scheme:dark){:root:not([data-theme=light]) .lmap .leaflet-tile{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.9)}}
 :root[data-theme=dark] .lmap .leaflet-tile{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.9)}
+body.night .navcard{background:#0A1511;color:#9FE3BD}body.night .lmap .leaflet-tile{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.9)}
+.navbar select,.navbar input[type=range]{width:auto}
 </style>
 
 
@@ -201,17 +209,140 @@ const fmt=m=>m<1000?Math.round(m)+' m':(m/1000).toFixed(1)+' km';
 const mapUrl=r=>r.lat!=null?`https://www.google.com/maps/dir/?api=1&destination=${r.lat},${r.lng}`:`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.addr)}`;
 function Nav({r}){return <a className="btn alt sm" style={{display:'inline-block',marginTop:12,textDecoration:'none'}} href={mapUrl(r)} target="_blank" rel="noopener">Navigate in Maps</a>}
 
+/* ---------- Turn-by-turn directions + voice ---------- */
+const OSRM='https://router.project-osrm.org/route/v1/driving/';
+const MOD={'left':'left','right':'right','slight left':'slightly left','slight right':'slightly right','sharp left':'sharp left','sharp right':'sharp right','straight':'straight','uturn':'uturn'};
+const ARROW={'left':'←','right':'→','slight left':'↖','slight right':'↗','sharp left':'↙','sharp right':'↘','straight':'↑','uturn':'↩'};
+const COMPASS=['north','north-east','east','south-east','south','south-west','west','north-west'];
+const arrowFor=m=>{if(!m)return '↑';if(m.type==='arrive')return '📍';if(m.type==='roundabout'||m.type==='rotary'||m.type==='roundabout turn')return '⟳';return ARROW[m.modifier]||'↑'};
+function stepText(st,first){
+ const m=st.maneuver||{},nm=st.name?(' onto '+st.name):'',mod=MOD[m.modifier];
+ switch(m.type){
+  case 'depart':return 'Head '+COMPASS[Math.round(((m.bearing_after||0)%360)/45)%8]+(st.name?' on '+st.name:'');
+  case 'arrive':return 'You have arrived at the pickup point'+(mod&&mod!=='straight'?', on your '+(mod.includes('left')?'left':'right'):'');
+  case 'roundabout':case 'rotary':case 'roundabout turn':return m.exit?('At the roundabout take exit '+m.exit+nm):('Enter the roundabout'+nm);
+  case 'exit roundabout':case 'exit rotary':return 'Exit the roundabout'+nm;
+  case 'fork':return 'Keep '+(mod&&mod.includes('left')?'left':'right')+' at the fork'+nm;
+  case 'merge':return 'Merge'+(mod&&mod!=='straight'?' '+mod:'')+nm;
+  case 'on ramp':case 'off ramp':return 'Take the ramp'+nm;
+  case 'end of road':return 'At the end of the road turn '+(mod||'')+nm;
+  case 'continue':case 'new name':return (mod&&mod!=='straight'?('Bear '+mod):'Continue straight')+nm;
+  default:
+   if(m.modifier==='uturn')return 'Make a U-turn';
+   if(!mod||mod==='straight')return 'Continue straight'+nm;
+   return 'Turn '+mod+nm}
+}
+const spokenDist=m=>m>=950?(m/1000).toFixed(1).replace(/\.0$/,'')+(m>=1050?' kilometres':' kilometre'):Math.max(10,Math.round(m/(m>200?50:10))*(m>200?50:10))+' metres';
+const mins=s=>Math.max(1,Math.round(s/60));
+// distance in metres from point to the closest spot on a route polyline [[lat,lng],...]
+function offRoute(lat,lng,line){
+ const k=Math.cos(lat*Math.PI/180),X=(la,ln)=>[(ln-lng)*111320*k,(la-lat)*110540];let best=1e9;
+ for(let i=0;i<line.length-1;i++){const a=X(line[i][0],line[i][1]),b=X(line[i+1][0],line[i+1][1]),dx=b[0]-a[0],dy=b[1]-a[1],L=dx*dx+dy*dy;
+  let t=L?Math.max(0,Math.min(1,-(a[0]*dx+a[1]*dy)/L)):0;const x=a[0]+t*dx,y=a[1]+t*dy;best=Math.min(best,Math.hypot(x,y))}
+ return best}
+let VOICE_ON=false,VOL=1,KEY='';
+const getLang=()=>{try{return localStorage.getItem('nav_lang')||'en'}catch(e){return 'en'}};
+function tts(text){try{if(!window.speechSynthesis)return;const u=new SpeechSynthesisUtterance(text);u.lang='en-GB';u.rate=1;u.volume=VOL;const v=speechSynthesis.getVoices().find(v=>/^en/i.test(v.lang));if(v)u.voice=v;speechSynthesis.cancel();speechSynthesis.speak(u)}catch(e){}}
+// Bemba/Nyanja: put recordings in voice/bem/<key>.mp3 and voice/nya/<key>.mp3 (keys like turn-left, arrive-). Missing files fall back to English speech.
+function say(text){if(!VOICE_ON||VOL<=0)return;const l=getLang();
+ if(l!=='en'&&KEY){try{const a=new Audio('voice/'+l+'/'+KEY+'.mp3');a.volume=VOL;a.onerror=()=>tts(text);a.play().catch(()=>tts(text));return}catch(e){}}
+ tts(text)}
+const cacheRoute=(id,rt)=>{try{localStorage.setItem('route_'+id,JSON.stringify(rt))}catch(e){}};
+const cachedRoute=id=>{try{return JSON.parse(localStorage.getItem('route_'+id)||'null')}catch(e){return null}};
+const fetchRoute=async(a,b)=>{const res=await fetch(`${OSRM}${a.lng},${a.lat};${b.lng},${b.lat}?overview=full&geometries=geojson&steps=true`);const j=await res.json();if(j.code!=='Ok'||!j.routes||!j.routes[0])throw new Error('no route');const rt=j.routes[0];return {steps:rt.legs[0].steps,line:rt.geometry.coordinates.map(c=>[c[1],c[0]]),dist:rt.distance,dur:rt.duration}};
+const ARRIVE_M=150,ALERTED={},NEAR=new Set();
+// shortest-order heuristic: the active trip first, then always the nearest next pickup
+const orderStops=(list,p)=>{const out=list.filter(r=>r.status==='enroute'),rest=list.filter(r=>r.status!=='enroute'&&r.lat!=null),nop=list.filter(r=>r.status!=='enroute'&&r.lat==null);let cur=out.length&&out[0].lat!=null?{lat:out[0].lat,lng:out[0].lng}:p;
+ while(rest.length){let bi=0;if(cur){let bd=1e18;rest.forEach((r,i)=>{const d=dist(cur.lat,cur.lng,r.lat,r.lng);if(d<bd){bd=d;bi=i}})}const n=rest.splice(bi,1)[0];out.push(n);cur={lat:n.lat,lng:n.lng}}
+ return out.concat(nop)};
+const lk=t=>String(t).split(/(https?:\/\/\S+)/).map((x,i)=>/^https?:/.test(x)?<a key={i} href={x} target="_blank" rel="noopener" style={{color:'var(--moss)'}}>open link</a>:x);
+const dlCsv=(rows,name)=>{const b=new Blob([rows.map(x=>x.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click()};
+
+function NavPanel({r,me,onRoute,alertFn}){
+ const [route,setRoute]=useState(null);const [idx,setIdx]=useState(0);const [voice,setVoice]=useState(false);
+ const [show,setShow]=useState(false);const [msg,setMsg]=useState('');
+ const ref=React.useRef({said:{},last:0,off:0,busy:false,idx:0,route:null});
+ const hasD=r.lat!=null;
+ const load=async(why)=>{
+  const o=ref.current;if(!me||!hasD||o.busy)return;o.busy=true;o.last=Date.now();
+  try{
+   const nr=await fetchRoute(me,r),{steps,line}=nr;cacheRoute(r.id,nr);
+   o.route=nr;o.idx=0;o.said={};o.off=0;setRoute(nr);setIdx(0);setMsg('');onRoute&&onRoute(line);
+   if(why==='reroute')say('Route updated. '+stepText(steps[0]))}
+  catch(e){const c=!o.route&&cachedRoute(r.id);if(c){o.route=c;o.idx=0;o.said={};setRoute(c);setIdx(0);onRoute&&onRoute(c.line);setMsg('Offline: using the saved route.')}else setMsg(route?'Could not update the route. Keeping the last one.':'Could not load directions. Check your connection, or use Navigate in Maps.')}
+  o.busy=false};
+ // first route as soon as we have a GPS fix
+ useEffect(()=>{if(me&&hasD&&!ref.current.route&&!ref.current.busy)load()},[!!me,r.id]);
+ // follow the collector
+ useEffect(()=>{
+  const o=ref.current,rt=o.route;if(!me||!rt)return;
+  // off route? ask for a new one (max once per 20 s)
+  if(offRoute(me.lat,me.lng,rt.line)>60){o.off++;o.offT=o.offT||Date.now();if(Date.now()-o.offT>120000&&alertFn)alertFn('off'+r.id,'⚠️ '+r.worker+' has been off the route for over 2 minutes ('+r.addr+').');if(o.off>=2&&Date.now()-o.last>20000){say('Rerouting');load('reroute');return}}else{o.off=0;o.offT=0}
+  // advance to the next step when we reach the upcoming turn
+  let i=o.idx;while(i<rt.steps.length-1){const nx=rt.steps[i+1].maneuver.location;if(dist(me.lat,me.lng,nx[1],nx[0])<25&&i+1<rt.steps.length-1){i++}else break}
+  if(i!==o.idx){o.idx=i;setIdx(i)}
+  const nxt=rt.steps[Math.min(i+1,rt.steps.length-1)],loc=nxt.maneuver.location,dm=dist(me.lat,me.lng,loc[1],loc[0]),said=o.said,key=i;
+  const arrive=nxt.maneuver.type==='arrive';
+  const t=stepText(nxt);KEY=(nxt.maneuver.type||'')+'-'+(nxt.maneuver.modifier||'');
+  if(!said[key+'a']){said[key+'a']=1;if(i===0)say(stepText(rt.steps[0])+'. Then in '+spokenDist(dm)+', '+t.charAt(0).toLowerCase()+t.slice(1));else say('In '+spokenDist(dm)+', '+t.charAt(0).toLowerCase()+t.slice(1))}
+  else if(dm<=250&&dm>120&&!said[key+'b']&&rt.steps[i].distance>350){said[key+'b']=1;say('In '+spokenDist(dm)+', '+t.charAt(0).toLowerCase()+t.slice(1))}
+  else if(dm<=110&&dm>40&&!said[key+'c']){said[key+'c']=1;say('In '+spokenDist(dm)+', '+t.charAt(0).toLowerCase()+t.slice(1))}
+  else if(dm<=40&&!said[key+'d']){said[key+'d']=1;say(arrive?t:t+' now')}
+ },[me&&me.lat,me&&me.lng]);
+ // voice toggle must come from a tap so phones allow speech
+ const toggle=()=>{const on=!voice;VOICE_ON=on;setVoice(on);
+  if(on){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance('Voice directions on');u.lang='en-GB';speechSynthesis.speak(u)}catch(e){setMsg('Voice is not supported on this browser.')}}else{try{speechSynthesis.cancel()}catch(e){}}};
+ useEffect(()=>()=>{VOICE_ON=false;try{speechSynthesis.cancel()}catch(e){}},[]);
+ // keep the screen awake while navigating
+ useEffect(()=>{let wl=null;const go=async()=>{try{if(navigator.wakeLock)wl=await navigator.wakeLock.request('screen')}catch(e){}};go();
+  const vis=()=>{if(document.visibilityState==='visible')go()};document.addEventListener('visibilitychange',vis);
+  return()=>{document.removeEventListener('visibilitychange',vis);try{wl&&wl.release()}catch(e){}}},[]);
+ if(!hasD)return <div className="mute" style={{marginTop:8}}>This pickup has no map pin, so turn-by-turn directions are not available. Use “Navigate in Maps”.</div>;
+ if(!route)return <div className="mute" style={{marginTop:8}}>{msg||(me?'Finding the best route…':'Waiting for GPS to start directions…')}{msg&&<> <button type="button" className="link" onClick={()=>load()}>Try again</button></>}</div>;
+ const nxt=route.steps[Math.min(idx+1,route.steps.length-1)],loc=nxt.maneuver.location;
+ const dm=me?dist(me.lat,me.lng,loc[1],loc[0]):nxt.distance;
+ const total=route.steps.slice(idx+1).reduce((a,s)=>a+s.distance,dm),eta=mins(route.dur*(total/route.dist));
+ return <div>
+  <div className="navcard" role="status" aria-live="polite"><div className="ar" aria-hidden="true">{arrowFor(nxt.maneuver)}</div>
+   <div><div className="nd">{nxt.maneuver.type==='arrive'?'Pickup ahead':'In '+spokenDist(dm)}</div><div className="nt">{stepText(nxt)}</div></div></div>
+  <div className="navbar"><button type="button" className={'btn sm '+(voice?'':'alt')} onClick={toggle} aria-pressed={voice}>{voice?'🔊 Voice on':'🔇 Voice off'}</button>
+   <select aria-label="Voice language" className="sz" defaultValue={getLang()} onChange={e=>{try{localStorage.setItem('nav_lang',e.target.value)}catch(_){}}}><option value="en">English</option><option value="bem">Bemba</option><option value="nya">Nyanja</option></select>
+   <input type="range" aria-label="Voice volume" min="0" max="1" step=".1" defaultValue={VOL} style={{width:80,padding:0}} onChange={e=>{VOL=+e.target.value}}/>
+   <button type="button" className="btn alt sm" aria-label="Night mode" onClick={()=>document.body.classList.toggle('night')}>🌙</button>
+   <span className="mute"><span className="eta">≈ {eta} min</span>{fmt(total)} to go</span>
+   <button type="button" className="btn alt sm" onClick={()=>setShow(!show)}>{show?'Hide steps':'All steps'}</button></div>
+  {msg&&<div className="mute" style={{color:'var(--red)'}}>{msg}</div>}
+  {show&&<ol className="steps">{route.steps.map((s,i)=><li key={i} className={i===idx+1?'now':''}>{stepText(s)} <span className="mute">({fmt(s.distance)})</span></li>)}</ol>}
+ </div>}
+
 function Live({r,act}){
- const [acc,setAcc]=useState(null);const [err,setErr]=useState('');const [d,setD]=useState(null);
+ const [acc,setAcc]=useState(null);const [err,setErr]=useState('');const [d,setD]=useState(null);const [me,setMe]=useState(null);const [route,setRoute]=useState(null);
+ const L=React.useRef({a:null,at:Date.now(),fix:Date.now(),cr:0});
+ const warn=(k,t)=>act.alert(k+r.id,t+' ('+r.worker+', '+r.addr+')');
  useEffect(()=>{
   if(!navigator.geolocation){setErr('GPS is not available on this device.');return}
-  const w=navigator.geolocation.watchPosition(p=>{setErr('');setAcc(Math.round(p.coords.accuracy));if(r.lat!=null)setD(dist(p.coords.latitude,p.coords.longitude,r.lat,r.lng));act.pos(r.id,p.coords.latitude,p.coords.longitude)},()=>setErr('Allow location access so the client and manager can track you.'),{enableHighAccuracy:true,maximumAge:2000,timeout:20000});
-  return()=>navigator.geolocation.clearWatch(w)},[r.id]);
- return <div className="codebox">{err?<span style={{color:'var(--red)'}}>{err}</span>:<span>Sharing live GPS{acc!=null?` (accuracy ${acc} m)`:''}…</span>}{d!=null&&(d<60?<div className="arr">📍 You have arrived. Collect the waste, weigh it and confirm below.</div>:<div className="mute" style={{marginTop:6}}>{fmt(d)} to the pickup point</div>)}<TrackMap r={r}/></div>
+  const o=L.current;
+  const w=navigator.geolocation.watchPosition(p=>{const la=p.coords.latitude,ln=p.coords.longitude,now=Date.now();o.fix=now;setErr('');setAcc(Math.round(p.coords.accuracy));setMe({lat:la,lng:ln});if(r.lat!=null)setD(dist(la,ln,r.lat,r.lng));act.pos(r.id,la,ln);
+   if(now-o.cr>15000){o.cr=now;act.crumb(r,la,ln)}
+   if(p.coords.speed!=null&&p.coords.speed>22)warn('spd','🚨 Speeding: '+Math.round(p.coords.speed*3.6)+' km/h');
+   if(!o.a||dist(o.a.lat,o.a.lng,la,ln)>30){o.a={lat:la,lng:ln};o.at=now}else if(now-o.at>300000&&(r.lat==null||dist(la,ln,r.lat,r.lng)>ARRIVE_M))warn('idle','⏸️ Stopped for over 5 minutes away from the pickup')},
+   ()=>{setErr('Allow location access so the client and manager can track you.');warn('gps','📡 GPS lost')},{enableHighAccuracy:true,maximumAge:2000,timeout:20000});
+  const iv=setInterval(()=>{if(Date.now()-o.fix>90000){setErr('GPS signal lost. Move to open sky.');warn('gps','📡 GPS signal lost for over 90 seconds')}},20000);
+  let bat=null;const chk=()=>{if(bat&&bat.level<=.15&&!bat.charging){act.toast('🔋 Battery low. Plug in your phone.');warn('bat','🔋 Low battery ('+Math.round(bat.level*100)+'%)')}};
+  navigator.getBattery&&navigator.getBattery().then(b=>{bat=b;b.addEventListener('levelchange',chk);chk()}).catch(()=>{});
+  return()=>{navigator.geolocation.clearWatch(w);clearInterval(iv);bat&&bat.removeEventListener('levelchange',chk)}},[r.id]);
+ return <div className="codebox">{err?<span style={{color:'var(--red)'}}>{err}</span>:<span>Sharing live GPS{acc!=null?` (accuracy ${acc} m)`:''}…</span>}{d!=null&&(d<60?<div className="arr">📍 You have arrived. Collect the waste, weigh it and confirm below.</div>:<div className="mute" style={{marginTop:6}}>{fmt(d)} to the pickup point</div>)}<NavPanel r={r} me={me} onRoute={setRoute} alertFn={act.alert}/><TrackMap r={r} route={route} drive/></div>
 }
+const PROBS=['Road blocked','Bin inaccessible','Gate locked / no one home','Other'];
+function Problem({r,act,me}){const [o,setO]=useState(false),[k,setK]=useState(PROBS[0]),[ph,setPh]=useState(null),[b,setB]=useState(false);
+ if(!o)return <button type="button" className="btn alt sm" style={{marginTop:10}} onClick={()=>setO(true)}>⚠️ Report a problem</button>;
+ return <div className="codebox"><b style={{font:'600 14px Figtree,sans-serif',letterSpacing:0}}>Report a problem</b><select aria-label="Problem" value={k} onChange={e=>setK(e.target.value)}>{PROBS.map(x=><option key={x}>{x}</option>)}</select>
+  <input type="file" accept="image/*" capture="environment" aria-label="Photo of the problem" onChange={e=>setPh(e.target.files[0])}/>
+  <div className="row" style={{marginTop:8}}><button className="btn sm" disabled={b} onClick={async()=>{setB(true);await act.problem(r,k,ph,me);setB(false);setO(false)}}>{b?'Sending…':'Send to manager (with GPS)'}</button><button type="button" className="link" onClick={()=>setO(false)}>Cancel</button></div></div>}
 
-function LMap({r}){
+function LMap({r,route,drive}){
  const el=React.useRef(null),m=React.useRef({}),p=r.pos,hasD=r.lat!=null;
+ const [fol,setFol]=useState(!!drive),[hd,setHd]=useState(0),prev=React.useRef(null),folR=React.useRef(fol);folR.current=fol;
  const fit=()=>{const o=m.current;if(!o.map)return;hasD?o.map.fitBounds([[p.lat,p.lng],[r.lat,r.lng]],{padding:[40,40],maxZoom:17}):o.map.setView([p.lat,p.lng],17)};
  useEffect(()=>{
   if(!window.L||!el.current)return;const L=window.L;
@@ -222,17 +353,28 @@ function LMap({r}){
   let line=null;
   if(hasD){L.marker([r.lat,r.lng],{icon:ic('home','📍',[20,20])}).addTo(map).bindTooltip('Pickup');
    line=L.polyline([[p.lat,p.lng],[r.lat,r.lng]],{color:'#2F6B4F',dashArray:'6 8',weight:3}).addTo(map)}
-  m.current={map,car,line};fit();setTimeout(()=>map.invalidateSize(),250);
+  m.current={map,car,line};map.on('dragstart',()=>setFol(false));fit();setTimeout(()=>map.invalidateSize(),250);
   return()=>{map.remove();m.current={}}},[r.id]);
- useEffect(()=>{const o=m.current;if(!o.map)return;o.car.setLatLng([p.lat,p.lng]);if(o.line)o.line.setLatLngs([[p.lat,p.lng],[r.lat,r.lng]]);else o.map.panTo([p.lat,p.lng])},[p.lat,p.lng]);
+ useEffect(()=>{const o=m.current;if(!o.map||!window.L)return;
+  if(o.rline){o.rline.remove();o.rline=null}
+  if(route&&route.length>1){o.rline=window.L.polyline(route,{color:'#2B6E94',weight:6,opacity:.85}).addTo(o.map);if(o.line){o.line.remove();o.line=null}
+   if(!folR.current)o.map.fitBounds(o.rline.getBounds(),{padding:[40,40],maxZoom:17})}},[route]);
+ useEffect(()=>{const o=m.current;if(!o.map)return;o.car.setLatLng([p.lat,p.lng]);if(o.line)o.line.setLatLngs([[p.lat,p.lng],[r.lat,r.lng]]);
+  const pv=prev.current;if(!pv)prev.current={lat:p.lat,lng:p.lng};else if(dist(pv.lat,pv.lng,p.lat,p.lng)>6){const rd=x=>x*Math.PI/180,dl=rd(p.lng-pv.lng),y=Math.sin(dl)*Math.cos(rd(p.lat)),x=Math.cos(rd(pv.lat))*Math.sin(rd(p.lat))-Math.sin(rd(pv.lat))*Math.cos(rd(p.lat))*Math.cos(dl);setHd((Math.atan2(y,x)*180/Math.PI+360)%360);prev.current={lat:p.lat,lng:p.lng}}
+  if(fol)o.map.setView([p.lat,p.lng],Math.max(o.map.getZoom(),17),{animate:true});else if(!o.rline)o.map.panTo([p.lat,p.lng])},[p.lat,p.lng,fol]);
  if(!window.L)return <div className="mute">The map could not load. Check your connection.</div>;
- return <div className="lmap"><div ref={el} role="img" aria-label="Live map showing the collector and the pickup point"/><button type="button" className="btn sm recen" onClick={fit}>⌖ Recenter</button></div>}
-function TrackMap({r}){
+ return <div className="lmap"><div ref={el} style={fol?{transform:`rotate(${-hd}deg) scale(1.5)`,transition:'transform .5s'}:undefined} role="img" aria-label="Live map showing the collector and the pickup point"/><button type="button" className="btn sm recen" onClick={()=>drive?setFol(true):fit()}>{drive?(fol?'🧭 Following':'🧭 Follow'):'⌖ Recenter'}</button></div>}
+function TrackMap({r,route,drive,alertMe}){
+ const [rt,setRt]=useState(null),[,tk]=useState(0),pr=React.useRef(r);pr.current=r;
+ const need=!drive&&r.status==='enroute'&&!!r.pos&&r.lat!=null;
+ useEffect(()=>{if(!need)return;let off=false;const go=()=>fetchRoute(pr.current.pos,pr.current).then(x=>{if(!off)setRt({...x,t:Date.now()})}).catch(()=>{});go();const t=setInterval(go,25000),c=setInterval(()=>tk(x=>x+1),10000);return()=>{off=true;clearInterval(t);clearInterval(c)}},[need,r.id]);
+ const eta=rt?Math.max(1,Math.round((rt.dur-(Date.now()-rt.t)/1000)/60)):null;
+ useEffect(()=>{if(alertMe&&eta!=null&&eta<=5&&!NEAR.has(r.id)){NEAR.add(r.id);chimeOnce();try{if(window.Notification&&Notification.permission==='granted')new Notification('🚛 Collector is about '+eta+' min away',{body:'Please put your bins out.'})}catch(e){}}},[eta]);
  if(r.status!=='enroute')return null;
  if(!r.pos)return <div className="mute" style={{marginTop:8}}>Waiting for the collector's GPS signal…</div>;
- const p=r.pos,hasD=r.lat!=null;
- return <div style={{marginTop:10}}><LMap r={r}/>
-  <div className="mute">{hasD&&<span className="eta">≈ {Math.max(1,Math.round(dist(p.lat,p.lng,r.lat,r.lng)/417))} min</span>}{hasD?fmt(dist(p.lat,p.lng,r.lat,r.lng))+' away · ':''}updated {new Date(p.t).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})} · <a href={`https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}`} target="_blank" rel="noopener" style={{color:'var(--moss)'}}>View on map</a></div></div>
+ const p=r.pos,hasD=r.lat!=null,sd=hasD?dist(p.lat,p.lng,r.lat,r.lng):0;
+ return <div style={{marginTop:10}}>{alertMe&&eta!=null&&eta<=5&&<div className="arr">🚛 Collector is about {eta} min away. Please put your bins out now.</div>}<LMap r={r} route={route||(rt&&rt.line)} drive={drive}/>
+  <div className="mute">{hasD&&<span className="eta">≈ {eta!=null?eta:Math.max(1,Math.round(sd/417))} min</span>}{hasD?fmt(rt?rt.dist:sd)+' away · ':''}updated {new Date(p.t).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})} · <a href={`https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}`} target="_blank" rel="noopener" style={{color:'var(--moss)'}}>View on map</a></div></div>
 }
 
 const shrink=file=>new Promise((ok,no)=>{const img=new Image();img.onload=()=>{const k=Math.min(1,1280/Math.max(img.width,img.height)),c=document.createElement('canvas');c.width=img.width*k;c.height=img.height*k;c.getContext('2d').drawImage(img,0,0,c.width,c.height);c.toBlob(b=>b?ok(b):no(),'image/jpeg',0.8)};img.onerror=no;img.src=URL.createObjectURL(file)});
@@ -287,7 +429,7 @@ function PCard({r,mgr,children}){
   <span className="grow"><b>{r.type}</b>{mgr&&<span> · {r.client}</span>}<span className="mute" style={{display:'block'}}>{r.addr}</span></span>
   <span className={'pill '+r.status}>{LABEL[r.status]}</span><span className="chev">{o?'▲':'▼'}</span></button>
   <Stepper s={r.status}/>
-  {o&&<div className="pc-b"><div className="mute">🕒 {r.slot} · requested {ago(T(r))}</div>{r.notes&&<div>“{r.notes}”</div>}{r.status==='requested'&&r.offered_to&&r.offered_to.length>0&&<div className="mute">📡 Offered to {r.offered_to.length} nearby collector{r.offered_to.length>1?'s':''}</div>}{r.rating&&<div className="mute">⭐ Rated {r.rating}/5</div>}{r.worker&&<div className="mute">🚛 {r.worker}{r.kg?` · ${r.kg} kg collected`:''}</div>}<TrackMap r={r}/><Proof r={r}/><Nav r={r}/>{r.worker_phone&&<Contact p={r.worker_phone} l="collector"/>}{mgr&&r.phone&&<Contact p={r.phone} l="client"/>}{!mgr&&r.status==='enroute'&&r.pos&&<button className="btn alt sm" style={{marginTop:12}} onClick={()=>shareTrack(r)}>🔗 Share collector location</button>}{children}</div>}</div>}
+  {o&&<div className="pc-b"><div className="mute">🕒 {r.slot} · requested {ago(T(r))}</div>{r.notes&&<div>“{r.notes}”</div>}{r.status==='requested'&&r.offered_to&&r.offered_to.length>0&&<div className="mute">📡 Offered to {r.offered_to.length} nearby collector{r.offered_to.length>1?'s':''}</div>}{r.rating&&<div className="mute">⭐ Rated {r.rating}/5</div>}{r.worker&&<div className="mute">🚛 {r.worker}{r.kg?` · ${r.kg} kg collected`:''}</div>}<TrackMap r={r} alertMe={!mgr}/><Proof r={r}/><Nav r={r}/>{r.worker_phone&&<Contact p={r.worker_phone} l="collector"/>}{mgr&&r.phone&&<Contact p={r.phone} l="client"/>}{!mgr&&r.status==='enroute'&&r.pos&&<button className="btn alt sm" style={{marginTop:12}} onClick={()=>shareTrack(r)}>🔗 Share collector location</button>}{children}</div>}</div>}
 function Bars({data}){const m=Math.max(1,...data.map(d=>d.v));return <svg viewBox={'0 0 '+data.length*40+' 104'} width="100%" role="img" aria-label="Pickups requested in the last 7 days">{data.map((d,i)=>{const h=d.v/m*60;return <g key={i}><rect x={i*40+6} y={78-h} width="28" height={Math.max(h,3)} rx="7" fill="var(--moss)" opacity={d.v?1:.25}/><text x={i*40+20} y={73-h} textAnchor="middle" fontSize="11" fill="var(--ink)">{d.v?(d.v>=1000?(d.v/1000).toFixed(1)+'k':d.v):''}</text><text x={i*40+20} y="98" textAnchor="middle" fontSize="11" fill="var(--mute)">{d.l}</text></g>})}</svg>}
 
 function Client({st,act,user}){
@@ -365,7 +507,10 @@ function Client({st,act,user}){
 
 function Worker({st,act,user}){
  const who=user.name;
- const mine=st.reqs.filter(r=>r.worker===who&&r.status!=='collected');
+ const [wpos,setWpos]=useState(null),wr=React.useRef(null);
+ useEffect(()=>{if(!navigator.geolocation)return;const w=navigator.geolocation.watchPosition(p=>{const q={lat:p.coords.latitude,lng:p.coords.longitude};wr.current=q;setWpos(o=>o&&dist(o.lat,o.lng,q.lat,q.lng)<50?o:q)},()=>{},{enableHighAccuracy:true,maximumAge:5000});return()=>navigator.geolocation.clearWatch(w)},[]);
+ const mine=orderStops(st.reqs.filter(r=>r.worker===who&&r.status!=='collected'),wpos);
+ useEffect(()=>{if(!wpos)return;mine.filter(r=>r.lat!=null&&!cachedRoute(r.id)).forEach(r=>fetchRoute(wpos,r).then(x=>cacheRoute(r.id,x)).catch(()=>{}))},[wpos&&Math.round(wpos.lat*100)+','+Math.round(wpos.lng*100),mine.map(r=>r.id).join()]);
  const done=st.reqs.filter(r=>r.worker===who&&r.status==='collected');
  const mp=usePaged(mine,3,'jobs'),dp=usePaged(done,5,'completed');
  const [kg,setKg]=useState({});const [ph,setPh]=useState({});const [busy,setBusy]=useState(null);const [wp,setWp]=useState(getPhone());
@@ -382,17 +527,18 @@ function Worker({st,act,user}){
   {offers.map(r=><div className="card live" key={r.id} role="alert"><div className="row"><div><b>🔔 New pickup nearby</b><div>{ICON[r.type]||'🗑️'} {r.type} · {r.addr}</div><div className="mute">{r.slot}</div></div></div><Nav r={r}/>
    <div className="row" style={{marginTop:10}}><button className="btn" onClick={()=>act.claim(r.id)}>Accept</button><button className="btn alt" onClick={()=>act.decline(r.id)}>Skip</button></div></div>)}
   <div className="card"><label htmlFor="wph" style={{margin:0}}>Your phone / WhatsApp (shared with clients on your jobs)</label><input id="wph" type="tel" inputMode="tel" value={wp} onChange={e=>setWp(e.target.value)} placeholder="e.g. 097 1234567"/></div>
+  {mine.length>1&&<div className="card"><b>🗺️ Shortest order</b><div className="mute">{mine.map((r,i)=>(i+1)+'. '+r.addr).join('  →  ')}</div><div className="mute">The next stop starts automatically after you confirm collection.</div></div>}
   {mine.length===0&&<div className="card empty">No jobs assigned. The manager will assign pickups to you.</div>}
-  {mp.items.map(r=><div className="card" key={r.id}><div className="row"><div><h3>{r.addr}</h3><div className="mute">{r.client} · {r.type}</div><div className="mute">{r.slot}</div>{r.notes&&<div style={{marginTop:6}}>“{r.notes}”</div>}</div><span className={'pill '+r.status}>{LABEL[r.status]}</span></div>
+  {mp.items.map(r=><div className="card" key={r.id}><div className="row"><div><h3>{r.addr}</h3><div className="mute">{r.client} · {r.type}</div><div className="mute">{r.slot}</div>{r.notes&&<div style={{marginTop:6}}>“{r.notes}”</div>}</div><span>{mine.length>1&&<span className="pill" style={{marginRight:6}}>Stop {mine.indexOf(r)+1} of {mine.length}</span>}<span className={'pill '+r.status}>{LABEL[r.status]}</span></span></div>
    <Track s={r.status}/>
-   <Nav r={r}/>{r.phone&&<span style={{marginLeft:8}}><Contact p={r.phone} l="client"/></span>}{r.status==='enroute'&&<Live r={r} act={act}/>}
+   <Nav r={r}/> <Problem r={r} act={act} me={wr.current}/>{r.phone&&<span style={{marginLeft:8}}><Contact p={r.phone} l="client"/></span>}{r.status==='enroute'&&<Live r={r} act={act}/>}
    {r.status==='assigned'&&PENDING.has(r.id)&&<button className="btn warn full" onClick={()=>act.accept(r.id)}>Accept job (stop alarm)</button>}
    {r.status==='assigned'&&<button className="btn full" onClick={()=>{markAccepted(r.id);stopAlarm(r.id);act.move(r.id,'enroute')}}>Start trip and share GPS</button>}
    {r.status==='enroute'&&<div><label htmlFor={'k'+r.id}>Weight collected (kg)</label><input id={'k'+r.id} type="number" min="0" inputMode="decimal" value={kg[r.id]||''} onChange={e=>setKg({...kg,[r.id]:e.target.value})} placeholder="e.g. 18"/>
     <div className="chips" style={{paddingTop:8}}>{[5,10,20,50].map(n=><button key={n} type="button" className="chip" onClick={()=>setKg({...kg,[r.id]:String((Number(kg[r.id])||0)+n)})}>+{n} kg</button>)}{kg[r.id]&&<button type="button" className="chip" onClick={()=>setKg({...kg,[r.id]:''})}>Clear</button>}</div>
     <label htmlFor={'p'+r.id}>Photo proof</label><input key={ph[r.id]?'a':'b'} id={'p'+r.id} type="file" accept="image/*" capture="environment" onChange={e=>setPh({...ph,[r.id]:e.target.files[0]})}/>
     <Thumb f={ph[r.id]} clear={()=>setPh({...ph,[r.id]:null})}/>
-    <button className="btn warn full" disabled={busy===r.id} onClick={async()=>{if(!kg[r.id])return act.toast('Enter the weight before confirming.');if(!ph[r.id])return act.toast('Take a photo of the collected waste first.');if(!window.confirm('Confirm '+kg[r.id]+' kg collected at '+r.addr+'?'+(Number(kg[r.id])>100?'\n\nThat is a very large weight. Please check it.':'')))return;setBusy(r.id);await act.move(r.id,'collected',kg[r.id],ph[r.id]);setBusy(null)}}>{busy===r.id?'Uploading…':'Confirm collected'}</button></div>}
+    <button className="btn warn full" disabled={busy===r.id} onClick={async()=>{if(r.lat!=null){const q=wr.current;if(!q)return act.toast('Turn on GPS. Collected is only allowed at the pickup point.');const dm=dist(q.lat,q.lng,r.lat,r.lng);if(dm>ARRIVE_M)return act.toast('You are '+fmt(dm)+' from the pickup. Get within '+ARRIVE_M+' m to confirm.')}if(!kg[r.id])return act.toast('Enter the weight before confirming.');if(!ph[r.id])return act.toast('Take a photo of the collected waste first.');if(!window.confirm('Confirm '+kg[r.id]+' kg collected at '+r.addr+'?'+(Number(kg[r.id])>100?'\n\nThat is a very large weight. Please check it.':'')))return;setBusy(r.id);await act.move(r.id,'collected',kg[r.id],ph[r.id]);setBusy(null);const nx=mine.find(x=>x.id!==r.id&&x.status==='assigned');if(nx){markAccepted(nx.id);stopAlarm(nx.id);act.move(nx.id,'enroute')}}}>{busy===r.id?'Uploading…':'Confirm collected'}</button></div>}
   </div>)}
   {mp.pager}
   {done.length>0&&<div className="card"><div className="row" style={{alignItems:'center',marginBottom:6}}><h3>Completed</h3><button className="link" onClick={()=>ask('Delete all '+done.length+' completed pickups? This cannot be undone.',()=>act.del(done.map(r=>r.id)))}>Clear all</button></div>{dp.items.map(r=><div className="note" key={r.id}><span>{r.addr}</span><span className="mute" style={{marginLeft:'auto'}}>{r.kg} kg</span><button className="x" aria-label="Delete pickup" onClick={()=>ask('Delete this completed pickup?',()=>act.del(r.id))}>🗑️</button></div>)}{dp.pager}</div>}
@@ -505,22 +651,57 @@ function Sales({st,act}){
   </div></div>}
 
 function ManagerMap({reqs}){
- const el=React.useRef(null),m=React.useRef({});
- const cars=reqs.filter(r=>r.status==='enroute'&&r.pos),wait=reqs.filter(r=>(r.status==='requested'||r.status==='assigned')&&r.lat!=null);
- const key=cars.map(r=>r.id+r.pos.lat+r.pos.lng).join()+wait.map(r=>r.id+r.status+r.worker).join();
+ const el=React.useRef(null),m=React.useRef({}),[heat,setHeat]=useState(false),[rts,setRts]=useState({}),s0=React.useRef({});
+ const cars=reqs.filter(r=>r.status==='enroute'&&r.pos),wait=reqs.filter(r=>(r.status==='requested'||r.status==='assigned')&&r.lat!=null),cr=React.useRef(cars);cr.current=cars;
+ const prog=r=>{const x=rts[r.id];if(!x)return null;return {pct:Math.max(0,Math.min(100,Math.round(100*(1-x.dist/Math.max(s0.current[r.id]||x.dist,x.dist))))),eta:mins(x.dur)}};
+ const key=cars.map(r=>r.id+r.pos.lat+r.pos.lng).join()+wait.map(r=>r.id+r.status+r.worker).join()+heat+Object.keys(rts).map(k=>Math.round(rts[k].dur)).join();
  const tip=t=>{const d=document.createElement('div');d.style.whiteSpace='pre-line';d.textContent=t;return d};
+ useEffect(()=>{if(!cars.length)return;let off=false;const go=()=>cr.current.forEach(r=>{if(r.lat==null)return;fetchRoute(r.pos,r).then(x=>{if(off)return;if(!s0.current[r.id])s0.current[r.id]=x.dist;setRts(o=>({...o,[r.id]:x}))}).catch(()=>{})});go();const t=setInterval(go,30000);return()=>{off=true;clearInterval(t)}},[cars.map(r=>r.id).join()]);
  useEffect(()=>{if(!window.L||!el.current)return;const L=window.L,map=L.map(el.current).setView([-15.4167,28.2833],12);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
   m.current={map,g:L.layerGroup().addTo(map),fit:false};setTimeout(()=>map.invalidateSize(),250);return()=>{map.remove();m.current={}}},[]);
  useEffect(()=>{const o=m.current;if(!o.map)return;const L=window.L,pts=[];o.g.clearLayers();
   const ic=(c,h)=>L.divIcon({className:'',html:'<div class="mk '+c+'">'+h+'</div>',iconSize:[40,40],iconAnchor:[20,20]});
-  cars.forEach(r=>{pts.push([r.pos.lat,r.pos.lng]);L.marker([r.pos.lat,r.pos.lng],{icon:ic('car','🚛')}).addTo(o.g).bindTooltip(tip((r.worker||'Collector')+' (on a trip)'))});
+  if(heat)reqs.filter(r=>r.lat!=null).forEach(r=>L.circle([r.lat,r.lng],{radius:350,stroke:false,fillColor:'#C4452D',fillOpacity:.14}).addTo(o.g));
+  cars.forEach(r=>{pts.push([r.pos.lat,r.pos.lng]);const x=rts[r.id],pg=prog(r),stale=Date.now()-r.pos.t>600000;if(x)L.polyline(x.line,{color:'#2B6E94',weight:5,opacity:.8}).addTo(o.g);
+   L.marker([r.pos.lat,r.pos.lng],{icon:ic('car','🚛')}).addTo(o.g).bindTooltip(tip((r.worker||'Collector')+' (on a trip)'+(pg?'\n'+pg.pct+'% of the trip · ETA '+pg.eta+' min':'')+(stale?'\n⚠ No GPS for '+Math.round((Date.now()-r.pos.t)/60000)+' min':'')))});
   wait.forEach(r=>{pts.push([r.lat,r.lng]);let n='';if(cars.length){const b=cars.map(c=>[c.worker,dist(c.pos.lat,c.pos.lng,r.lat,r.lng)]).sort((a,b)=>a[1]-b[1])[0];n='\nNearest on a trip: '+b[0]+' ('+fmt(b[1])+')'}
    L.marker([r.lat,r.lng],{icon:ic('home','📍')}).addTo(o.g).bindTooltip(tip(r.client+' · '+r.addr+'\n'+(r.worker?'Assigned: '+r.worker:'Not assigned yet')+n))});
   if(!o.fit&&pts.length){o.map.fitBounds(pts,{padding:[40,40],maxZoom:15});o.fit=true}},[key]);
  if(!window.L)return <div className="mute">The map could not load. Check your connection.</div>;
- return <div><div className="lmap"><div ref={el} style={{height:380}} role="img" aria-label="Map of active collectors and waiting pickups"/></div>
+ return <div><div style={{marginBottom:8}}><button type="button" className={'btn sm '+(heat?'':'alt')} onClick={()=>setHeat(!heat)} aria-pressed={heat}>🔥 Request heatmap</button></div><div className="lmap"><div ref={el} style={{height:380}} role="img" aria-label="Map of active collectors, their routes and waiting pickups"/></div>
+  {cars.map(r=>{const pg=prog(r);return <div className="note" key={r.id}><span>🚛</span><div><b>{r.worker}</b> → {r.addr}<div className="mute">{pg?pg.pct+'% of the trip · ETA '+pg.eta+' min':'Finding route…'}</div></div></div>})}
   <div className="mute" style={{marginTop:8}}>🚛 {cars.length} collector{cars.length===1?'':'s'} on a trip · 📍 {wait.length} waiting pickup{wait.length===1?'':'s'} with a pinned location. Collectors share GPS only while on a trip. Tap a marker for details.</div></div>}
+
+function Replay({r}){const [pts,setPts]=useState(null),el=React.useRef(null);
+ useEffect(()=>{if(!pts||!pts.length||!window.L||!el.current)return;const L=window.L,map=L.map(el.current),ll=pts.map(p=>[p.lat,p.lng]);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+  const pl=L.polyline(ll,{color:'#2B6E94',weight:4,opacity:.4}).addTo(map);map.fitBounds(pl.getBounds(),{padding:[30,30]});if(r.lat!=null)L.marker([r.lat,r.lng]).addTo(map).bindTooltip('Pickup');
+  const mk=L.circleMarker(ll[0],{radius:8,color:'#2F6B4F',fillOpacity:1}).addTo(map),dn=L.polyline([ll[0]],{color:'#2F6B4F',weight:5}).addTo(map);let i=0;
+  const t=setInterval(()=>{i++;if(i>=ll.length){clearInterval(t);return}mk.setLatLng(ll[i]);dn.addLatLng(ll[i])},Math.max(60,Math.min(400,12000/ll.length)));
+  setTimeout(()=>map.invalidateSize(),200);return()=>{clearInterval(t);map.remove()}},[pts]);
+ const load=async()=>{const {data,error}=await sb.from('trip_points').select('lat,lng,created').eq('request_id',String(r.id)).order('created');setPts(error?[]:data||[])};
+ if(!pts)return <button type="button" className="btn alt sm" style={{marginTop:12,marginRight:8}} onClick={load}>▶ Replay trip</button>;
+ if(!pts.length)return <div className="mute">No driven path was recorded for this pickup. (Run navigation-features.sql in Supabase once.)</div>;
+ let km=0;for(let i=1;i<pts.length;i++){const d=dist(pts[i-1].lat,pts[i-1].lng,pts[i].lat,pts[i].lng);if(d<2000)km+=d}
+ return <div style={{marginTop:10}}><div className="lmap"><div ref={el}/></div><div className="mute">{fmt(km)} driven · {Math.max(1,Math.round((new Date(pts[pts.length-1].created)-new Date(pts[0].created))/60000))} min · started {new Date(pts[0].created).toLocaleString([], {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div></div>}
+
+function Delays({reqs,workers,act}){
+ const [lim,setLim]=useState(()=>{try{return +localStorage.getItem('delay_min')||20}catch(e){return 20}}),[,tk]=useState(0);
+ useEffect(()=>{const t=setInterval(()=>tk(x=>x+1),30000);return()=>clearInterval(t)},[]);
+ let seen={};try{seen=JSON.parse(localStorage.getItem('assigned_seen')||'{}')}catch(e){}
+ let ch=false;const kf=r=>r.id+'|'+r.worker;reqs.filter(r=>r.status==='assigned').forEach(r=>{if(!seen[kf(r)]){seen[kf(r)]=Date.now();ch=true}});if(ch)try{localStorage.setItem('assigned_seen',JSON.stringify(seen))}catch(e){}
+ const mn=x=>Math.round((Date.now()-x)/60000);
+ const late=reqs.map(r=>{if(r.status==='assigned'){const t0=r.assigned_at?+new Date(r.assigned_at):seen[kf(r)],a=t0?mn(t0):0;return a>=lim?{r,why:'Assigned '+a+' min ago, trip not started'}:null}
+  if(r.status==='enroute'){const a=r.pos?mn(r.pos.t):lim;return a>=lim?{r,why:r.pos?'No GPS update for '+a+' min':'Trip started but no GPS signal'}:null}return null}).filter(Boolean);
+ const open=w=>reqs.filter(r=>r.worker===w&&r.status!=='collected').length;
+ const best=r=>workers.filter(w=>w!==r.worker).sort((a,b)=>open(a)-open(b))[0];
+ return <div className="card"><div className="row" style={{alignItems:'center'}}><h2>⏰ Delayed collectors</h2><select aria-label="Delay limit" className="sz" value={lim} onChange={e=>{setLim(+e.target.value);try{localStorage.setItem('delay_min',e.target.value)}catch(_){}}}>{[10,20,30,45,60].map(n=><option key={n} value={n}>After {n} min</option>)}</select></div>
+  {late.length===0&&<div className="mute" style={{marginTop:8}}>✅ Nobody is running late.</div>}
+  {late.map(({r,why})=><div className="note" key={r.id} style={{flexWrap:'wrap',alignItems:'center'}}><span>{ICON[r.type]}</span><div style={{flex:1,minWidth:170}}><b>{r.addr}</b><div className="mute">{r.worker} · {why}</div></div>
+   <select aria-label="Reassign to" style={{width:150}} value="" onChange={e=>e.target.value&&ask('Reassign '+r.addr+' to '+e.target.value+'?',()=>act.assign(r.id,e.target.value))}><option value="">Reassign to…</option>{workers.filter(w=>w!==r.worker).map(w=><option key={w} value={w}>{w} ({open(w)} open)</option>)}</select>
+   {best(r)&&<button className="btn sm" onClick={()=>ask('Reassign to '+best(r)+' (least busy)?',()=>act.assign(r.id,best(r)))}>⚡ Least busy</button>}
+   <button className="btn alt sm" onClick={()=>ask('Send this pickup back to nearby collectors?',()=>act.assign(r.id,''))}>↩ Back to pool</button></div>)}</div>}
 function Manager({st,act,users,me}){
  const [age,setAge]=useState(30);const [tab,setTab]=useState('over'),[q,setQ]=useState(''),[fl,setFl]=useState('all'),[sort,setSort]=useState('new'),[rf,setRf]=useState('all');
  const WORKERS=users.filter(u=>u.role==='worker'&&!u.blocked).map(u=>u.name);
@@ -544,6 +725,12 @@ function Manager({st,act,users,me}){
  const tp=usePaged(team,6,'people');
  const np=usePaged(st.notes,4,'alerts');
  const csv=()=>{const rows=[['Client','Address','Type','Slot','Collector','Status','Kg']].concat(st.reqs.map(r=>[r.client,r.addr,r.type,r.slot,r.worker||'',LABEL[r.status],r.kg||'']));const b=new Blob([rows.map(x=>x.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='pickups.csv';a.click()};
+ const report=async()=>{const {data,error}=await sb.from('trip_points').select('request_id,worker,lat,lng,created').gte('created',new Date(Date.now()-30*864e5).toISOString()).order('created').limit(20000);
+  if(error||!data||!data.length)return act.toast('No trip data yet. Run navigation-features.sql in Supabase once.');
+  const tr={},rows={};data.forEach(p=>{(tr[p.request_id]=tr[p.request_id]||[]).push(p)});
+  Object.entries(tr).forEach(([id,ps])=>{const rq=st.reqs.find(x=>String(x.id)===id);let m=0;for(let i=1;i<ps.length;i++){const d=dist(ps[i-1].lat,ps[i-1].lng,ps[i].lat,ps[i].lng);if(d<2000)m+=d}
+   const day=new Date(ps[0].created).toLocaleDateString('en-CA'),k=day+'|'+(ps[0].worker||''),o=rows[k]=rows[k]||{day,w:ps[0].worker||'',km:0,n:0,mn:0,kg:0};o.km+=m/1000;o.n++;o.mn+=(new Date(ps[ps.length-1].created)-new Date(ps[0].created))/60000;if(rq&&rq.kg)o.kg+=Number(rq.kg)});
+  dlCsv([['Date','Collector','Km driven','Pickups','Avg minutes per pickup','Kg collected']].concat(Object.values(rows).sort((a,b)=>a.day<b.day?1:-1).map(o=>[o.day,o.w,o.km.toFixed(1),o.n,Math.round(o.mn/o.n),o.kg])),'trip-report.csv')};
  const tabs=[['over','📊 Overview'],['pick','🗑️ Pickups'],['cli','👥 Clients'],['map','🗺️ Live map'],['sales','💰 Sales'],['team','🛠️ Team']];
  return <div className="fade">
   <div className="seg" role="tablist">{tabs.map(([k,l])=><button key={k} className={tab===k?'on':''} onClick={()=>go(k)}>{l}{k==='over'&&unread>0&&<span className="badge">{unread}</span>}{k==='sales'&&st.pays.some(p=>p.status==='pending')&&<span className="badge">{st.pays.filter(p=>p.status==='pending').length}</span>}</button>)}</div>
@@ -556,6 +743,7 @@ function Manager({st,act,users,me}){
    </div>
    {(()=>{const rs=WORKERS.map(w=>{const x=st.reqs.filter(r=>r.worker===w&&r.rating);return [w,x.length?x.reduce((a,r)=>a+r.rating,0)/x.length:0,x.length,st.reqs.filter(r=>r.worker===w&&r.status==='collected').length]}).sort((a,b)=>b[1]-a[1]);
     return <div className="card"><h2 style={{marginBottom:10}}>Collector ratings</h2>{rs.length===0?<div className="mute">No collectors yet.</div>:rs.map(([w,a,n,j])=><div className="note" key={w} style={{alignItems:'center'}}><span className="av">{ini(w)}</span><div className="grow"><b>{w}</b><div className="mute">{j} job{j===1?'':'s'} done</div></div><b>{n?'⭐ '+a.toFixed(1):'No ratings yet'}</b><span className="mute">{n?'('+n+')':''}</span></div>)}</div>})()}
+   <Delays reqs={st.reqs} workers={WORKERS} act={act}/>
    {cnt('requested')>0&&<div className="card"><h2 style={{marginBottom:8}}>Needs a collector <span className="pill requested">{cnt('requested')}</span></h2>
     {st.reqs.filter(r=>r.status==='requested').slice(0,5).map(r=><div className="note" key={r.id} style={{flexWrap:'wrap',alignItems:'center'}}><span>{ICON[r.type]}</span><div style={{flex:1,minWidth:150}}><b>{r.addr}</b><div className="mute">{r.client} · {r.slot}</div></div>
      <select aria-label="Assign collector" style={{width:140}} value="" onChange={e=>act.assign(r.id,e.target.value)}><option value="">Assign…</option>{WORKERS.map(w=><option key={w}>{w}</option>)}</select></div>)}
@@ -563,17 +751,17 @@ function Manager({st,act,users,me}){
    {cnt('enroute')>0&&<div className="card"><h2 style={{marginBottom:8}}>🚛 Live tracking</h2>{st.reqs.filter(r=>r.status==='enroute').map(r=><div key={r.id} style={{marginBottom:14}}><b>{r.worker}</b> heading to {r.addr}<TrackMap r={r}/></div>)}</div>}
    <div className="card"><div className="row" style={{alignItems:'center'}}><h2>🔔 Notifications</h2>{unread>0&&<button className="btn alt sm" onClick={act.read}>Mark all read</button>}</div>
     {st.notes.length===0&&<div className="empty">Nothing yet.</div>}
-    {np.items.map(n=><div className="note" key={n.id}><span className={'dot'+(n.read?' r':'')}/><div><div>{n.text}</div><div className="mute">{n.time}</div></div></div>)}{np.pager}</div>
+    {np.items.map(n=><div className="note" key={n.id}><span className={'dot'+(n.read?' r':'')}/><div><div>{lk(n.text)}</div><div className="mute">{n.time}</div></div></div>)}{np.pager}</div>
   </div>}
   {tab==='pick'&&<div>
-   <div className="row" style={{alignItems:'center',marginBottom:10}}><div style={{flex:1,minWidth:200}}><Search v={q} set={v=>{setQ(v);pp.reset()}} ph="Search client, address or collector"/></div><button className="btn alt sm" onClick={csv}>⬇ Export CSV</button></div>
+   <div className="row" style={{alignItems:'center',marginBottom:10}}><div style={{flex:1,minWidth:200}}><Search v={q} set={v=>{setQ(v);pp.reset()}} ph="Search client, address or collector"/></div><button className="btn alt sm" onClick={csv}>⬇ Export CSV</button><button className="btn alt sm" onClick={report}>⬇ Trip report</button></div>
    <Chips val={fl} set={v=>{setFl(v);pp.reset()}} opts={[['all','All',st.reqs.length],['requested','Requested',cnt('requested')],['assigned','Assigned',cnt('assigned')],['enroute','On the way',cnt('enroute')],['collected','Done',cnt('collected')]]}/>
    <select aria-label="Sort" className="sz" style={{marginBottom:12}} value={sort} onChange={e=>setSort(e.target.value)}><option value="new">Newest first</option><option value="old">Oldest first</option></select>
    <div className="card"><div className="row" style={{alignItems:'center'}}><div><b>🧹 Clean up old jobs</b><div className="mute">Remove finished pickups to keep the list short. Sales records stay.</div></div>
     <div className="row" style={{alignItems:'center',gap:8,justifyContent:'flex-end'}}><select aria-label="Delete completed pickups older than" className="sz" value={age} onChange={e=>setAge(+e.target.value)}><option value={0}>All completed</option><option value={7}>Older than 7 days</option><option value={30}>Older than 30 days</option><option value={90}>Older than 90 days</option></select>
     <button className="btn sm" style={{background:'var(--red)',color:'#fff'}} disabled={!oldDone.length} onClick={purge}>🗑️ Delete {oldDone.length}</button></div></div></div>
    {pk.length===0&&<div className="card empty">No pickups match.</div>}
-   {pp.items.map(r=><PCard key={r.id} r={r} mgr>{(r.status==='requested'||r.status==='assigned')&&<div><label>Collector</label><select aria-label="Assign collector" value={r.worker||''} onChange={e=>act.assign(r.id,e.target.value)}><option value="">Unassigned</option>{WORKERS.map(w=><option key={w}>{w}</option>)}</select></div>}<button className="btn alt sm" style={{marginTop:12,color:'var(--red)'}} onClick={()=>{if(confirm(r.status==='collected'?'Delete this completed pickup? Payment records are kept.':'This pickup is still ACTIVE. Delete it anyway? The client and collector will lose it.'))act.del(r.id)}}>🗑️ Delete this pickup</button></PCard>)}
+   {pp.items.map(r=><PCard key={r.id} r={r} mgr>{(r.status==='enroute'||r.status==='collected')&&<Replay r={r}/>}{(r.status==='requested'||r.status==='assigned')&&<div><label>Collector</label><select aria-label="Assign collector" value={r.worker||''} onChange={e=>act.assign(r.id,e.target.value)}><option value="">Unassigned</option>{WORKERS.map(w=><option key={w}>{w}</option>)}</select></div>}<button className="btn alt sm" style={{marginTop:12,color:'var(--red)'}} onClick={()=>{if(confirm(r.status==='collected'?'Delete this completed pickup? Payment records are kept.':'This pickup is still ACTIVE. Delete it anyway? The client and collector will lose it.'))act.del(r.id)}}>🗑️ Delete this pickup</button></PCard>)}
    {pp.pager}</div>}
   {tab==='cli'&&<div>
    <Search v={q} set={v=>{setQ(v);cp.reset()}} ph="Search clients by name or email"/>
@@ -747,6 +935,10 @@ function App(){
    if(error)throw error;merge(data);
    note(status==='collected'?`${r.worker} collected ${kg} kg of ${r.type.toLowerCase()} waste at ${r.addr}.`:`${r.worker} is on the way to ${r.addr}.`);
    setMsg(status==='collected'?'Collected. Manager notified.':'Trip started. Client can now track you.')}catch(e){fail()}},
+  alert:(k,t)=>{if(ALERTED[k]&&Date.now()-ALERTED[k]<600000)return;ALERTED[k]=Date.now();note(t)},
+  crumb:(r,lat,lng)=>{sb.from('trip_points').insert({request_id:String(r.id),worker:r.worker,lat,lng}).then(()=>{})},
+  problem:async(r,k,photo,p)=>{try{let u='';if(photo){const path='problem-'+r.id+'-'+Date.now()+'.jpg';const up=await sb.storage.from('proofs').upload(path,await shrink(photo),{contentType:'image/jpeg'});if(!up.error)u=' Photo: '+sb.storage.from('proofs').getPublicUrl(path).data.publicUrl}
+   note(`⚠️ ${r.worker||user.name} reports: ${k} at ${r.addr}.`+(p?' Location: https://www.google.com/maps/search/?api=1&query='+p.lat+','+p.lng:'')+u);setMsg('Problem sent to the manager.')}catch(e){fail()}},
   pos:(id,lat,lng)=>{const t=Date.now();if(t-lastPos<4000)return;lastPos=t;sb.from('requests').update({pos:{lat,lng,t}}).eq('id',id).then(()=>{})},
   read:()=>{setNotes(n=>n.map(x=>({...x,read:true})));sb.from('notifications').update({is_read:true}).eq('is_read',false).then(()=>{})},
   pay:async(r,d)=>{const {data,error}=await sb.from('payments').insert({request_id:String(r.id),client:r.client,amount:Number(d.amount),provider:d.provider,phone:d.phone,ref:d.ref}).select().single();
