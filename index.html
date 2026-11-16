@@ -136,12 +136,14 @@ const {useState,useEffect}=React;
 // ===== Paste your keys here (Supabase: Project settings > API. OneSignal: Settings > Keys & IDs) =====
 const SUPABASE_URL='https://vxkhkrbsgbualgabacbj.supabase.co';
 const SUPABASE_KEY='sb_publishable_XLYKroCRtT-avUHH3-Qjjw__tRa3rCE';
-const OS_ID='YOUR_ONESIGNAL_APP_ID';
+const OS_ID='b7bd23da-8686-4314-974c-70a90e7a136e';
 const configured=!SUPABASE_URL.includes('YOUR_PROJECT_REF');
 const sb=configured?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
-let lastPos=0;
+let lastPos=0,lastLoc=0;
 window.OneSignalDeferred=window.OneSignalDeferred||[];
-if(configured&&!OS_ID.startsWith('YOUR_'))OneSignalDeferred.push(OS=>OS.init({appId:OS_ID}));
+// Works on a sub-folder host such as GitHub Pages (/rayTECH-garbagecollection/) as well as a root domain.
+const APP_BASE=location.pathname.replace(/[^/]*$/,'');
+if(configured&&!OS_ID.startsWith('YOUR_'))OneSignalDeferred.push(OS=>OS.init({appId:OS_ID,serviceWorkerPath:APP_BASE.slice(1)+'OneSignalSDKWorker.js',serviceWorkerParam:{scope:APP_BASE}}));
 const PUSH=!OS_ID.startsWith('YOUR_');
 // ===== Assignment alarm: rings + vibrates repeatedly until the collector accepts =====
 let AUDIO_CTX=null,ALARM_T=null,WAKE=null;const PENDING=new Set();
@@ -156,10 +158,15 @@ const ringOnce=()=>{
    o.start(t+d);o.stop(t+d+0.28)})}catch(e){}};
 const getAccepted=()=>{try{return JSON.parse(localStorage.getItem('accepted_jobs')||'[]')}catch(e){return[]}};
 const markAccepted=id=>{try{localStorage.setItem('accepted_jobs',JSON.stringify([...new Set([...getAccepted(),id])].slice(-200)))}catch(e){}};
+const wantsAlert=(r,uid)=>(r.worker_id===uid&&r.status==='assigned'&&!getAccepted().includes(r.id))||(r.status==='requested'&&Array.isArray(r.offered_to)&&r.offered_to.includes(uid));
+const popup=r=>{try{if(!('Notification' in window)||Notification.permission!=='granted'||!navigator.serviceWorker)return;
+ navigator.serviceWorker.getRegistration().then(reg=>{const o={body:`${r.type||'Pickup'} at ${r.addr}. First to accept gets it.`,tag:'job-'+r.id,requireInteraction:true,renotify:true,vibrate:[500,200,500,200,500],icon:'icon-192.png',data:{local:true,id:r.id}};
+  reg?reg.showNotification('🚛 New pickup assigned',o):new Notification('🚛 New pickup assigned',o)})}catch(e){}};
+const closePopup=id=>{try{navigator.serviceWorker&&navigator.serviceWorker.getRegistration().then(reg=>reg&&reg.getNotifications({tag:'job-'+id}).then(l=>l.forEach(n=>n.close())))}catch(e){}};
 const startAlarm=async id=>{PENDING.add(id);
  if(!ALARM_T){ringOnce();ALARM_T=setInterval(ringOnce,2500)}
  try{if('wakeLock' in navigator&&!WAKE)WAKE=await navigator.wakeLock.request('screen')}catch(e){}};
-const stopAlarm=id=>{PENDING.delete(id);
+const stopAlarm=id=>{PENDING.delete(id);closePopup(id);
  if(PENDING.size===0){clearInterval(ALARM_T);ALARM_T=null;try{navigator.vibrate&&navigator.vibrate(0)}catch(e){}
   try{WAKE&&WAKE.release();WAKE=null}catch(e){}}};
 const MYNOTES=new Set();
@@ -174,9 +181,12 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 const STEPS=['requested','assigned','enroute','collected'];
 const LABEL={requested:'Requested',assigned:'Assigned',enroute:'On the way',collected:'Collected'};
 const TYPES=['Household','Recyclables','Garden waste','Bulky items','Commercial'];
+// Set to true once pawaPay is approved and its keys are added in Supabase. Until then payments use the manual transaction-ID form.
+const MOMO_LIVE=false;
 const PROV=['MTN MoMo','Airtel Money','Zamtel Kwacha'];
 // Set the numbers customers pay to (leave a name empty if you do not use that network):
 const PAY_TO={'MTN MoMo':'','Airtel Money':'','Zamtel Kwacha':''};
+const toPo=p=>({...p,amount:Number(p.amount),created:+new Date(p.created)});
 const toPay=p=>({...p,amount:Number(p.amount),created:+new Date(p.created)});
 const WORKERS=['Chanda M.','Mwila K.','Bwalya T.'];
 const now=()=>new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
@@ -245,6 +255,7 @@ function PCard({r,mgr,children}){
   <span className="grow"><b>{r.type}</b>{mgr&&<span> · {r.client}</span>}<span className="mute" style={{display:'block'}}>{r.addr}</span></span>
   <span className={'pill '+r.status}>{LABEL[r.status]}</span><span className="chev">{o?'▲':'▼'}</span></button>
   <Stepper s={r.status}/>
+  {r.status==='requested'&&<div className="mute" style={{marginTop:8}}>🔎 {mgr?'Offered to nearby collectors; retrying every 30 s until one accepts':'Nearby collectors are being alerted. The first to accept gets your pickup.'}{r.assign_tries>0?` · attempt ${r.assign_tries}`:''}</div>}
   {o&&<div className="pc-b"><div className="mute">🕒 {r.slot} · requested {ago(T(r))}</div>{r.notes&&<div>“{r.notes}”</div>}{r.worker&&<div className="mute">🚛 {r.worker}{r.kg?` · ${r.kg} kg collected`:''}</div>}<TrackMap r={r}/><Proof r={r}/><Nav r={r}/>{children}</div>}</div>}
 function Bars({data}){const m=Math.max(1,...data.map(d=>d.v));return <svg viewBox={'0 0 '+data.length*40+' 104'} width="100%" role="img" aria-label="Pickups requested in the last 7 days">{data.map((d,i)=>{const h=d.v/m*60;return <g key={i}><rect x={i*40+6} y={78-h} width="28" height={Math.max(h,3)} rx="7" fill="var(--moss)" opacity={d.v?1:.25}/><text x={i*40+20} y={73-h} textAnchor="middle" fontSize="11" fill="var(--ink)">{d.v?(d.v>=1000?(d.v/1000).toFixed(1)+'k':d.v):''}</text><text x={i*40+20} y="98" textAnchor="middle" fontSize="11" fill="var(--mute)">{d.l}</text></g>})}</svg>}
 
@@ -290,17 +301,28 @@ function Client({st,act,user}){
 function Worker({st,act,user}){
  const who=user.name;
  const mine=st.reqs.filter(r=>r.worker===who&&r.status!=='collected');
+ const offers=st.reqs.filter(r=>r.status==='requested'&&Array.isArray(r.offered_to)&&r.offered_to.includes(user.id));
  const done=st.reqs.filter(r=>r.worker===who&&r.status==='collected');
  const mp=usePaged(mine,3,'jobs'),dp=usePaged(done,5,'completed');
  const [kg,setKg]=useState({});const [ph,setPh]=useState({});const [busy,setBusy]=useState(null);
+ useEffect(()=>{if(!user.available||!navigator.geolocation)return;
+  const w=navigator.geolocation.watchPosition(p=>act.ping(p.coords.latitude,p.coords.longitude),()=>{},{enableHighAccuracy:false,maximumAge:15000,timeout:30000});
+  const iv=setInterval(()=>navigator.geolocation.getCurrentPosition(p=>act.ping(p.coords.latitude,p.coords.longitude,true),()=>{}),120000);
+  let o=null;try{unlockAudio();if(AUDIO_CTX){o=AUDIO_CTX.createOscillator();const g=AUDIO_CTX.createGain();g.gain.value=0.0008;o.frequency.value=30;o.connect(g);g.connect(AUDIO_CTX.destination);o.start()}}catch(e){}
+  return()=>{navigator.geolocation.clearWatch(w);clearInterval(iv);try{o&&o.stop()}catch(e){}}},[user.available]);
  return <div>
   <div className="card"><h2>Hello, {who}</h2>
-   <div className="mute" style={{marginTop:8}}>{mine.length} to collect · {done.length} done today</div></div>
-  {mine.length===0&&<div className="card empty">No jobs assigned. The manager will assign pickups to you.</div>}
+   <div className="mute" style={{marginTop:8}}>{mine.length} to collect · {done.length} done today</div>
+   <div className="row" style={{alignItems:'center',marginTop:12}}><div style={{flex:1,minWidth:180}}><b>{user.available?'🟢 Online: nearby pickups are assigned to you':'⚪ Offline: you will not get new pickups'}</b><div className="mute">Keep this app open while online so your location stays current. Accept within 2 minutes or the job moves to the next collector.</div></div>
+    <button className={'btn sm'+(user.available?' alt':'')} onClick={()=>act.avail(!user.available)}>{user.available?'Go offline':'Go online'}</button></div></div>
+  <PayoutCard user={user} act={act} st={st}/>
+  {offers.map(r=><div className="card" key={'o'+r.id} style={{border:'2px solid var(--amber)'}}><div className="row"><div><h3>🔔 New pickup nearby</h3><div className="mute">{ICON[r.type]||'🗑️'} {r.type} · {r.addr}</div>{r.lat!=null&&user.lat!=null&&<div className="mute">{fmt(dist(user.lat,user.lng,r.lat,r.lng))} from you</div>}<div className="mute">{r.slot}</div>{r.notes&&<div style={{marginTop:6}}>“{r.notes}”</div>}</div><span className="pill requested">First to accept gets it</span></div>
+   <div className="row" style={{gap:8,marginTop:10}}><button className="btn warn full" onClick={()=>act.claim(r.id)}>Accept job</button><button className="btn alt full" onClick={()=>act.decline(r.id)}>Skip</button></div></div>)}
+  {mine.length===0&&offers.length===0&&<div className="card empty">{user.available?'No jobs yet. You will be alerted when a nearby pickup is assigned.':'No jobs assigned. Go online to receive nearby pickups.'}</div>}
   {mp.items.map(r=><div className="card" key={r.id}><div className="row"><div><h3>{r.addr}</h3><div className="mute">{r.client} · {r.type}</div><div className="mute">{r.slot}</div>{r.notes&&<div style={{marginTop:6}}>“{r.notes}”</div>}</div><span className={'pill '+r.status}>{LABEL[r.status]}</span></div>
    <Track s={r.status}/>
    <Nav r={r}/>{r.status==='enroute'&&<Live r={r} act={act}/>}
-   {r.status==='assigned'&&PENDING.has(r.id)&&<button className="btn warn full" onClick={()=>act.accept(r.id)}>Accept job (stop alarm)</button>}
+   {r.status==='assigned'&&PENDING.has(r.id)&&<div className="row" style={{gap:8}}><button className="btn warn full" onClick={()=>act.accept(r.id)}>Accept job (stop alarm)</button><button className="btn alt full" onClick={()=>{if(confirm('Pass this pickup to the next collector?'))act.decline(r.id)}}>Decline</button></div>}
    {r.status==='assigned'&&<button className="btn full" onClick={()=>{markAccepted(r.id);stopAlarm(r.id);act.move(r.id,'enroute')}}>Start trip and share GPS</button>}
    {r.status==='enroute'&&<div><label htmlFor={'k'+r.id}>Weight collected (kg)</label><input id={'k'+r.id} type="number" min="0" inputMode="decimal" value={kg[r.id]||''} onChange={e=>setKg({...kg,[r.id]:e.target.value})} placeholder="e.g. 18"/>
     <label htmlFor={'p'+r.id}>Photo proof</label><input id={'p'+r.id} type="file" accept="image/*" capture="environment" onChange={e=>setPh({...ph,[r.id]:e.target.files[0]})}/>
@@ -378,25 +400,53 @@ function PayBox({r,st,act}){
  const ps=st.pays.filter(p=>p.request_id===String(r.id));
  const sm=s=>ps.filter(p=>p.status===s).reduce((a,p)=>a+p.amount,0);
  const paid=sm('confirmed'),pend=sm('pending'),rej=ps.some(p=>p.status==='rejected')&&!pend&&!paid;
- const [o,setO]=useState(false),[prov,setProv]=useState(PROV[0]),[ph,setPh]=useState(''),[ref,setRef]=useState(''),[am,setAm]=useState(''),[busy,setBusy]=useState(false);
- const to=PAY_TO[prov];
+ const [o,setO]=useState(false),[man,setMan]=useState(!MOMO_LIVE),[prov,setProv]=useState(PROV[0]),[ph,setPh]=useState(''),[ref,setRef]=useState(''),[am,setAm]=useState(''),[busy,setBusy]=useState(false),[pid,setPid]=useState(null);
+ const cur=pid&&st.pays.find(p=>p.id===pid);
+ useEffect(()=>{if(!pid||(cur&&cur.status!=='pending'))return;const t=setInterval(()=>act.refreshPay(pid),5000);return()=>clearInterval(t)},[pid,cur&&cur.status]);
+ useEffect(()=>{if(!cur)return;if(cur.status==='confirmed'){act.toast('Payment received. Thank you!');setPid(null);setO(false);setAm('')}else if(cur.status==='rejected'){act.toast('Payment was not approved. You can try again.');setPid(null)}},[cur&&cur.status]);
+ const hasW=!!r.worker_id;
+ const pin=async()=>{const a=Number(am);if(!(a>0))return act.toast('Type the amount you want to pay.');if(ph.replace(/\D/g,'').length<9)return act.toast('Enter your mobile money number.');setBusy(true);const id=await act.payNow(r,{provider:prov,phone:ph.trim(),amount:a});setBusy(false);if(id)setPid(id)};
  const send=async()=>{const a=Number(am);if(!(a>0))return act.toast('Type the amount you paid.');if(ph.replace(/\D/g,'').length<9)return act.toast('Enter the mobile money number you paid from.');if(ref.trim().length<4)return act.toast('Enter the transaction ID from your payment message.');setBusy(true);const ok=await act.pay(r,{provider:prov,phone:ph.trim(),ref:ref.trim(),amount:a});setBusy(false);if(ok){setO(false);setAm('');setRef('')}};
+ const to=PAY_TO[prov];
  return <div>
   {paid>0&&<div className="paid">✅ Paid {fK(paid)}</div>}
-  {pend>0&&<div className="paid wait">⏳ {fK(pend)} sent. Waiting for confirmation.</div>}
-  {rej&&<div className="paid bad">Your last payment was rejected. Check the details and try again.</div>}
-  {!o&&<button className="btn warn sm" style={{marginTop:12}} onClick={()=>setO(true)}>📱 Pay with mobile money</button>}
+  {pend>0&&<div className="paid wait">⏳ {fK(pend)} waiting for confirmation.</div>}
+  {rej&&<div className="paid bad">Your last payment was not completed. You can try again.</div>}
+  {!o&&<button className="btn warn sm" style={{marginTop:12}} disabled={!hasW} onClick={()=>setO(true)}>📱 Pay with mobile money</button>}
+  {!o&&!hasW&&<div className="mute">You can pay once a collector accepts your pickup.</div>}
   {o&&<div className="codebox"><b style={{font:'700 16px Figtree',letterSpacing:0}}>Pay by mobile money</b>
-   <Chips val={prov} set={setProv} opts={PROV.map(x=>[x,x])}/>
-   <div className="mute" style={{marginBottom:6}}>Send money to <b style={{font:'700 15px Figtree',letterSpacing:0}}>{to||'the RayTECH mobile money number'}</b> on {prov}, then enter the details below.</div>
-   <label htmlFor={'ma'+r.id}>Amount you paid (ZMW)</label><input id={'ma'+r.id} type="number" min="1" inputMode="decimal" value={am} onChange={e=>setAm(e.target.value)} placeholder="Type the amount, e.g. 75"/>
-   <label htmlFor={'mp'+r.id}>Your mobile money number</label><input id={'mp'+r.id} type="tel" inputMode="tel" value={ph} onChange={e=>setPh(e.target.value)} placeholder="e.g. 0961234567"/>
-   <label htmlFor={'mr'+r.id}>Transaction ID</label><input id={'mr'+r.id} value={ref} onChange={e=>setRef(e.target.value)} placeholder="From the confirmation SMS"/>
-   <div className="row" style={{marginTop:12}}><button className="btn sm" disabled={busy} onClick={send}>{busy?'Sending…':'I have paid'}</button><button className="btn alt sm" onClick={()=>setO(false)}>Cancel</button></div></div>}</div>}
+   {pid?<div style={{marginTop:10}}><div>📲 <b>Check your phone.</b> Enter your mobile money PIN to approve {fK(cur?cur.amount:Number(am))}.</div><div className="mute" style={{marginTop:6}}>This page updates by itself once you approve. The request expires after a few minutes.</div><button className="btn alt sm" style={{marginTop:10}} onClick={()=>setPid(null)}>Close</button></div>
+   :man?<div>
+    <Chips val={prov} set={setProv} opts={PROV.map(x=>[x,x])}/>
+    <div className="mute" style={{marginBottom:6}}>Send money to <b style={{font:'700 15px Figtree',letterSpacing:0}}>{to||'the RayTECH mobile money number'}</b> on {prov}, then enter the details below.</div>
+    <label htmlFor={'ma'+r.id}>Amount you paid (ZMW)</label><input id={'ma'+r.id} type="number" min="1" inputMode="decimal" value={am} onChange={e=>setAm(e.target.value)} placeholder="e.g. 75"/>
+    <label htmlFor={'mp'+r.id}>Your mobile money number</label><input id={'mp'+r.id} type="tel" inputMode="tel" value={ph} onChange={e=>setPh(e.target.value)} placeholder="e.g. 0961234567"/>
+    <label htmlFor={'mr'+r.id}>Transaction ID</label><input id={'mr'+r.id} value={ref} onChange={e=>setRef(e.target.value)} placeholder="From the confirmation SMS"/>
+    <div className="row" style={{marginTop:12}}><button className="btn sm" disabled={busy} onClick={send}>{busy?'Sending…':'I have paid'}</button>{MOMO_LIVE?<button className="btn alt sm" onClick={()=>setMan(false)}>Back</button>:<button className="btn alt sm" onClick={()=>setO(false)}>Cancel</button>}</div></div>
+   :<div>
+    <div className="mute" style={{marginBottom:6}}>Your payment goes to your collector. You will get a PIN prompt on your phone.</div>
+    <Chips val={prov} set={setProv} opts={PROV.map(x=>[x,x])}/>
+    <label htmlFor={'ma'+r.id}>Amount (ZMW)</label><input id={'ma'+r.id} type="number" min="1" inputMode="decimal" value={am} onChange={e=>setAm(e.target.value)} placeholder="Type any amount, e.g. 75"/>
+    <label htmlFor={'mp'+r.id}>Your mobile money number</label><input id={'mp'+r.id} type="tel" inputMode="tel" value={ph} onChange={e=>setPh(e.target.value)} placeholder="e.g. 0961234567"/>
+    <div className="row" style={{marginTop:12}}><button className="btn sm" disabled={busy} onClick={pin}>{busy?'Sending prompt…':'Send PIN prompt'}</button><button className="btn alt sm" onClick={()=>setO(false)}>Cancel</button></div>
+    <button className="link" style={{marginTop:8}} onClick={()=>setMan(true)}>Already paid by sending money? Enter the transaction ID</button></div>}
+  </div>}</div>}
+
+function PayoutCard({user,act,st}){
+ const [ph,setPh]=useState(user.payout_msisdn||''),[pv,setPv]=useState(user.payout_provider||PROV[0]),[ed,setEd]=useState(!user.payout_msisdn);
+ const mine=st.pouts.filter(p=>p.kind==='collector'),sum=f=>mine.filter(f).reduce((a,p)=>a+p.amount,0);
+ const got=sum(p=>p.status==='completed'),wait=sum(p=>p.status==='pending'||p.status==='processing');
+ return <div className="card"><h3 style={{marginBottom:4}}>💰 Earnings</h3>
+  <div className="mute">Received {fK(got)}{wait>0?' · '+fK(wait)+' on the way':''}</div>
+  {!ed&&<div className="row" style={{alignItems:'center',marginTop:8}}><span>Payouts go to <b>{user.payout_msisdn}</b> ({user.payout_provider})</span><button className="link" onClick={()=>setEd(true)}>Change</button></div>}
+  {ed&&<div style={{marginTop:8}}>{!user.payout_msisdn&&<div style={{color:'var(--red)',marginBottom:6}}>Add your mobile money number so clients can pay you.</div>}
+   <Chips val={pv} set={setPv} opts={PROV.map(x=>[x,x])}/>
+   <label htmlFor="pom">Your mobile money number</label><input id="pom" type="tel" inputMode="tel" value={ph} onChange={e=>setPh(e.target.value)} placeholder="e.g. 0971234567"/>
+   <button className="btn sm" style={{marginTop:10}} onClick={async()=>{if(ph.replace(/\D/g,'').length<9)return act.toast('Enter a valid mobile money number.');await act.setPayout(ph.trim(),pv);setEd(false)}}>Save payout number</button></div>}</div>}
 
 function Sales({st,act}){
  const [m,setM]=useState('day');
- const ok=st.pays.filter(p=>p.status==='confirmed'),pend=st.pays.filter(p=>p.status==='pending');
+ const ok=st.pays.filter(p=>p.status==='confirmed'),pend=st.pays.filter(p=>p.status==='pending'&&!p.gateway);
  const N=m==='day'?14:12,key=d=>m==='day'?d.toDateString():d.getFullYear()+'-'+d.getMonth();
  const bk=[...Array(N)].map((_,i)=>{const d=new Date();d.setHours(0,0,0,0);if(m==='day')d.setDate(d.getDate()-(N-1-i));else{d.setDate(1);d.setMonth(d.getMonth()-(N-1-i))}
   return {k:key(d),l:m==='day'?d.getDate():d.toLocaleDateString([], {month:'short'}),t:d.toLocaleDateString([], m==='day'?{weekday:'short',day:'numeric',month:'short'}:{month:'long',year:'numeric'}),v:0,n:0}});
@@ -408,6 +458,9 @@ function Sales({st,act}){
  const csv=()=>{const rows=[['Date','Client','Amount (ZMW)','Provider','Phone','Transaction ID']].concat(ok.map(p=>[new Date(p.created).toLocaleString(),p.client,p.amount,p.provider,p.phone,p.ref]));const b=new Blob([rows.map(x=>x.map(v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='sales.csv';a.click()};
  return <div>
   <div className="grid four">{[['Today',fK(today),'💵'],['This month',fK(month),'📅'],['All time',fK(sum(()=>true)),'🏦'],['Pending',pend.length,'⏳']].map(([l,v,i])=><div className="card stat" key={l}><span className="si">{i}</span><b>{v}</b><span className="mute">{l}</span></div>)}</div>
+  {st.pouts.length>0&&(()=>{const po=st.pouts,tot=k=>po.filter(p=>p.kind===k&&p.status==='completed').reduce((a,p)=>a+p.amount,0),bad=po.filter(p=>p.status==='failed');
+   return <div className="card"><h2 style={{marginBottom:6}}>Payout split</h2><div className="mute">Paid to collectors {fK(tot('collector'))} · Commission received {fK(tot('commission'))}</div>
+    {bad.map(p=><div className="note" key={p.id} style={{flexWrap:'wrap',alignItems:'center'}}><div style={{flex:1,minWidth:170}}><b>{p.kind==='commission'?'Commission':'Collector'} · {fK(p.amount)} failed</b><div className="mute">{p.to_msisdn} · {p.failure||'failed'}</div></div><button className="btn sm" onClick={()=>act.retryPayout(p.id)}>Retry</button></div>)}</div>})()}
   {pend.length>0&&<div className="card"><h2 style={{marginBottom:8}}>Confirm payments</h2>{sp.items.map(p=><div className="note" key={p.id} style={{flexWrap:'wrap',alignItems:'center'}}><div style={{flex:1,minWidth:170}}><b>{p.client} · {fK(p.amount)}</b><div className="mute">{p.provider} · {p.phone} · ID {p.ref}</div><div className="mute">{ago(p.created)}</div></div>
    <button className="btn sm" onClick={()=>act.payOk(p.id,'confirmed')}>Confirm</button><button className="btn alt sm" onClick={()=>act.payOk(p.id,'rejected')}>Reject</button></div>)}{sp.pager}</div>}
   <div className="row" style={{alignItems:'center',marginBottom:6}}><Chips val={m} set={v=>{setM(v);tp2.reset()}} opts={[['day','Daily'],['month','Monthly']]}/><button className="btn alt sm" onClick={csv}>⬇ Export CSV</button></div>
@@ -442,7 +495,7 @@ function Manager({st,act,users,me}){
  const csv=()=>{const rows=[['Client','Address','Type','Slot','Collector','Status','Kg']].concat(st.reqs.map(r=>[r.client,r.addr,r.type,r.slot,r.worker||'',LABEL[r.status],r.kg||'']));const b=new Blob([rows.map(x=>x.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='pickups.csv';a.click()};
  const tabs=[['over','📊 Overview'],['pick','🗑️ Pickups'],['cli','👥 Clients'],['sales','💰 Sales'],['team','🛠️ Team']];
  return <div className="fade">
-  <div className="seg" role="tablist">{tabs.map(([k,l])=><button key={k} className={tab===k?'on':''} onClick={()=>go(k)}>{l}{k==='over'&&unread>0&&<span className="badge">{unread}</span>}{k==='sales'&&st.pays.some(p=>p.status==='pending')&&<span className="badge">{st.pays.filter(p=>p.status==='pending').length}</span>}</button>)}</div>
+  <div className="seg" role="tablist">{tabs.map(([k,l])=><button key={k} className={tab===k?'on':''} onClick={()=>go(k)}>{l}{k==='over'&&unread>0&&<span className="badge">{unread}</span>}{k==='sales'&&st.pays.some(p=>p.status==='pending'&&!p.gateway)&&<span className="badge">{st.pays.filter(p=>p.status==='pending'&&!p.gateway).length}</span>}</button>)}</div>
   {tab==='over'&&<div>
    <div className="grid four">{[['Total',st.reqs.length,'all','📦'],['Open',open,'open','⏳'],['Collected',col.length,'collected','✅'],['Kg collected',kg,'collected','⚖️']].map(([l,v,f,i])=><button className="card stat tap" key={l} onClick={()=>go('pick',f)}><span className="si">{i}</span><b>{v}</b><span className="mute">{l}</span></button>)}</div>
    <div className="grid two" style={{alignItems:'start'}}>
@@ -478,7 +531,7 @@ function Manager({st,act,users,me}){
   {tab==='team'&&<div className="card"><h2 style={{marginBottom:4}}>Team</h2><div className="mute" style={{marginBottom:10}}>People who register start as clients. Promote trusted people to Collector or Manager (managers have the same powers as you), or block anyone who should not have access.</div>
    <Search v={q} set={v=>{setQ(v);tp.reset()}} ph="Search people"/>
    <Chips val={rf} set={v=>{setRf(v);tp.reset()}} opts={[['all','All',users.length],...Object.entries(ROLE).map(([k,l])=>[k,l+'s',users.filter(u=>u.role===k).length]),['blocked','🚫 Blocked',users.filter(u=>u.blocked).length]]}/>
-   {tp.items.map(u=>{const mine1=u.id===me;return <div className="note" key={u.id} style={{alignItems:'center',flexWrap:'wrap',opacity:u.blocked?.65:1}}><span className="av">{ini(u.name)}</span><div style={{flex:1,minWidth:150}}><b>{u.name}</b>{mine1&&<span className="pill" style={{marginLeft:6}}>You</span>}{u.blocked&&<span className="pill" style={{marginLeft:6,background:'#FBD9CE',color:'#7A2410'}}>Blocked</span>}<div className="mute">{u.email}</div></div>
+   {tp.items.map(u=>{const mine1=u.id===me;return <div className="note" key={u.id} style={{alignItems:'center',flexWrap:'wrap',opacity:u.blocked?.65:1}}><span className="av">{ini(u.name)}</span><div style={{flex:1,minWidth:150}}><b>{u.name}</b>{mine1&&<span className="pill" style={{marginLeft:6}}>You</span>}{u.blocked&&<span className="pill" style={{marginLeft:6,background:'#FBD9CE',color:'#7A2410'}}>Blocked</span>}{u.role==='worker'&&!u.blocked&&<span className="pill" style={{marginLeft:6}}>{u.available?'🟢 Online':'⚪ Offline'}</span>}<div className="mute">{u.email}</div></div>
     <select aria-label={'Role for '+u.name} style={{width:130}} disabled={mine1} value={u.role} onChange={e=>act.setRole(u.id,e.target.value)}>{Object.entries(ROLE).map(([k,l])=><option key={k} value={k}>{l}</option>)}</select>
     {!mine1&&<button className="btn alt sm" style={u.blocked?{}:{color:'var(--red)'}} onClick={()=>{if(u.blocked||confirm('Block '+u.name+'?\n\nThey will be signed out and cannot use the app until you unblock them.'))act.block(u.id,!u.blocked)}}>{u.blocked?'✅ Unblock':'🚫 Block'}</button>}</div>})}
    {tp.pager}</div>}
@@ -555,9 +608,10 @@ function App(){
  const [notes,setNotes]=useState([]);
  const [users,setUsers]=useState([]);
  const [pays,setPays]=useState([]);
+ const [pouts,setPouts]=useState([]);
  const [msg,setMsg]=useState('');
  const [pushOn,setPushOn]=useState(false);
- const st={reqs,notes,pays};
+ const st={reqs,notes,pays,pouts};
  const merge=row=>setReqs(p=>[toReq(row),...p.filter(x=>x.id!==row.id)].sort((a,b)=>b.created-a.created));
  const uid=session&&session.user.id;
  useEffect(()=>{if(!configured)return;
@@ -565,14 +619,14 @@ function App(){
   const {data:{subscription}}=sb.auth.onAuthStateChange((ev,s)=>{if(ev==='PASSWORD_RECOVERY')setRecovery(true);setSession(s)});
   return()=>subscription.unsubscribe()},[]);
  useEffect(()=>{if(!configured||session===undefined)return;
-  if(!session){setUser(null);setReqs([]);setNotes([]);setUsers([]);setPays([]);return}
+  if(!session){setUser(null);setReqs([]);setNotes([]);setUsers([]);setPays([]);setPouts([]);return}
   let off=false;
   (async()=>{for(let i=0;i<5;i++){const {data}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();if(off)return;if(data){if(data.blocked){setMsg('Your account has been blocked. Contact RayTECH.');sb.auth.signOut();return}setUser(data);return}await new Promise(r=>setTimeout(r,500))}
    setMsg('Account profile not found. Ask your manager for help.');sb.auth.signOut()})();
   return()=>{off=true}},[uid,session===undefined]);
  useEffect(()=>{if(!configured||!user)return;
   stopAllAlarms();let live=true;const mgr=user.role==='manager';
-  sb.from('requests').select('*').order('created',{ascending:false}).then(({data,error})=>{if(!live)return;error?setMsg('Could not load pickups. Check your connection.'):(data.forEach(r=>{if(r.worker_id===user.id&&r.status==='assigned'&&!getAccepted().includes(r.id))startAlarm(r.id)}),setReqs(data.map(toReq)))});
+  sb.from('requests').select('*').order('created',{ascending:false}).then(({data,error})=>{if(!live)return;error?setMsg('Could not load pickups. Check your connection.'):(data.forEach(r=>{if(wantsAlert(r,user.id)){startAlarm(r.id);popup(r)}}),setReqs(data.map(toReq)))});
   const loadUsers=()=>sb.from('profiles').select('*').order('name').then(({data})=>live&&data&&setUsers(data));
   if(mgr){
    sb.from('notifications').select('*').order('created',{ascending:false}).limit(50).then(({data})=>live&&data&&setNotes(data.map(toNote)));
@@ -580,22 +634,38 @@ function App(){
   let ch=sb.channel('rt-'+user.id).on('postgres_changes',{event:'*',schema:'public',table:'requests'},p=>{
    if(p.eventType==='DELETE'){stopAlarm(p.old.id);setReqs(prev=>prev.filter(x=>x.id!==p.old.id))}
    else{const n=p.new;
-    if(n.worker_id===user.id&&n.status==='assigned'){if(!getAccepted().includes(n.id)&&!PENDING.has(n.id))startAlarm(n.id)}
+    if(wantsAlert(n,user.id)){if(!PENDING.has(n.id)){startAlarm(n.id);popup(n)}}
     else stopAlarm(n.id);
     merge(n)}});
   if(mgr)ch=ch.on('postgres_changes',{event:'*',schema:'public',table:'notifications'},p=>{
    if(p.eventType==='INSERT'&&!MYNOTES.has(p.new.text))chimeOnce();
    if(p.eventType!=='DELETE')setNotes(prev=>[toNote(p.new),...prev.filter(x=>x.id!==p.new.id)].sort((a,b)=>0).slice(0,50))})
    .on('postgres_changes',{event:'*',schema:'public',table:'profiles'},loadUsers);
-  ch.subscribe();let pch=null;
+  ch.subscribe();let pch=null,ouch=null;
+  const loadPo=()=>sb.from('payouts').select('*').order('created',{ascending:false}).then(({data,error})=>{if(live&&!error&&data)setPouts(data.map(toPo))});
+  loadPo();ouch=sb.channel('po-'+user.id).on('postgres_changes',{event:'*',schema:'public',table:'payouts'},loadPo).subscribe();
   sb.from('payments').select('*').order('created',{ascending:false}).then(({data,error})=>{if(!live||error||!data)return;setPays(data.map(toPay));
    pch=sb.channel('pay-'+user.id).on('postgres_changes',{event:'*',schema:'public',table:'payments'},p=>{if(p.eventType!=='DELETE')setPays(prev=>[toPay(p.new),...prev.filter(x=>x.id!==p.new.id)])}).subscribe()});
-  return()=>{live=false;stopAllAlarms();sb.removeChannel(ch);pch&&sb.removeChannel(pch)}},[user&&user.id,user&&user.role]);
+  return()=>{live=false;stopAllAlarms();sb.removeChannel(ch);pch&&sb.removeChannel(pch);ouch&&sb.removeChannel(ouch)}},[user&&user.id,user&&user.role]);
  useEffect(()=>{if(!configured||!user)return;
   const c=sb.channel('me-'+user.id).on('postgres_changes',{event:'UPDATE',schema:'public',table:'profiles',filter:'id=eq.'+user.id},p=>{const n=p.new;
    if(n.blocked){setMsg('Your account has been blocked. Contact RayTECH.');sb.auth.signOut()}else setUser(u=>({...u,...n}))}).subscribe();
   return()=>{sb.removeChannel(c)}},[user&&user.id]);
  useEffect(()=>{if(!user||!PUSH)return;OneSignalDeferred.push(OS=>{OS.login(user.id);setPushOn(!!OS.Notifications.permission)})},[user&&user.id]);
+ useEffect(()=>{if(!configured||!user)return;
+  const refresh=()=>sb.from('requests').select('*').order('created',{ascending:false}).then(({data})=>{if(!data)return;
+   data.forEach(r=>{if(wantsAlert(r,user.id)&&!PENDING.has(r.id)){startAlarm(r.id);popup(r)}});
+   [...PENDING].forEach(id=>{const r=data.find(x=>x.id===id);if(!r||!wantsAlert(r,user.id))stopAlarm(id)});
+   setReqs(data.map(toReq))});
+  const vis=()=>{if(document.visibilityState==='visible')refresh()};
+  document.addEventListener('visibilitychange',vis);window.addEventListener('online',refresh);window.addEventListener('focus',refresh);
+  const t=user.role==='worker'?setInterval(refresh,8000):null;
+  return()=>{document.removeEventListener('visibilitychange',vis);window.removeEventListener('online',refresh);window.removeEventListener('focus',refresh);t&&clearInterval(t)}},[user&&user.id,user&&user.role]);
+ const needs=reqs.some(r=>r.status==='requested'||(r.status==='assigned'&&!r.accepted));
+ const sweep=!!user&&(user.role==='worker'?!!user.available:needs);
+ useEffect(()=>{if(!configured||!sweep)return;
+  const run=()=>sb.rpc('retry_unassigned').then(()=>{});
+  const t=setInterval(run,user.role==='worker'?60000:30000);return()=>clearInterval(t)},[sweep,user&&user.role]);
  useEffect(()=>{if(!msg)return;const t=setTimeout(()=>setMsg(''),3500);return()=>clearTimeout(t)},[msg]);
  const enablePush=()=>OneSignalDeferred.push(async OS=>{await OS.Notifications.requestPermission();const on=!!OS.Notifications.permission;setPushOn(on);setMsg(on?'Alerts turned on for this phone.':'Alerts are blocked. Allow notifications in your browser settings.')});
  const logout=async()=>{if(PUSH)OneSignalDeferred.push(OS=>OS.logout());await sb.auth.signOut()};
@@ -612,24 +682,51 @@ function App(){
    gone.forEach(stopAlarm);setReqs(p=>p.filter(x=>!gone.includes(x.id)));
    sb.storage.from('proofs').remove(gone.map(i=>i+'.jpg')).then(()=>{});
    setMsg(gone.length===1?'Pickup deleted.':gone.length+' pickups deleted.')},
-  accept:id=>{const r=reqs.find(x=>x.id===id);markAccepted(id);stopAlarm(id);if(r)note(`${r.worker||user.name} accepted the pickup at ${r.addr}.`);setMsg('Job accepted. Manager notified.')},
+  accept:id=>{const r=reqs.find(x=>x.id===id);markAccepted(id);stopAlarm(id);sb.rpc('accept_job',{p_request:String(id)}).then(()=>{});if(r)note(`${r.worker||user.name} accepted the pickup at ${r.addr}.`);setMsg('Job accepted. Manager notified.')},
   add:async f=>{const {data,error}=await sb.from('requests').insert({uid:user.id,client:f.client,addr:f.addr,type:f.type,slot:f.slot,notes:f.notes,lat:f.lat,lng:f.lng}).select().single();
-   if(error)return fail();merge(data);note(`New pickup request from ${f.client}: ${f.type} at ${f.addr}.`);setMsg('Pickup requested. We will assign a collector soon.')},
+   if(error)return fail();merge(data);note(`New pickup request from ${f.client}: ${f.type} at ${f.addr}.`);
+   setMsg('Pickup requested. Alerting nearby collectors…');
+   const {data:ok,error:ae}=await sb.rpc('auto_assign',{p_request:String(data.id)});
+   if(ae)return setMsg('Pickup requested. Run auto-assign.sql in Supabase once to enable auto-assign.');
+   const {data:row}=await sb.from('requests').select('*').eq('id',data.id).maybeSingle();if(row)merge(row);
+   setMsg(ok?'Nearby collectors alerted. The first to accept gets your pickup.':'No collector online nearby right now. We keep retrying automatically.')},
   assign:async(id,name)=>{const w=users.find(u=>u.role==='worker'&&!u.blocked&&u.name===name);const r=reqs.find(x=>x.id===id);
    const {data,error}=await sb.from('requests').update({worker:w?w.name:null,worker_id:w?w.id:null,status:w?'assigned':'requested'}).eq('id',id).select().single();
    if(error)return fail();merge(data);if(w)note(`${w.name} assigned to ${r.addr}.`)},
   move:async(id,status,kg,photo)=>{const r=reqs.find(x=>x.id===id);try{
+   if(status==='enroute')await sb.rpc('accept_job',{p_request:String(id)});
    let extra={};
    if(photo){const path=id+'.jpg';const up=await sb.storage.from('proofs').upload(path,await shrink(photo),{contentType:'image/jpeg',upsert:true});if(up.error)throw up.error;extra={proof_url:sb.storage.from('proofs').getPublicUrl(path).data.publicUrl+'?t='+Date.now()}}
    const {data,error}=await sb.from('requests').update({status,...(kg?{kg:Number(kg)}:{}),...extra}).eq('id',id).select().single();
    if(error)throw error;merge(data);
    note(status==='collected'?`${r.worker} collected ${kg} kg of ${r.type.toLowerCase()} waste at ${r.addr}.`:`${r.worker} is on the way to ${r.addr}.`);
    setMsg(status==='collected'?'Collected. Manager notified.':'Trip started. Client can now track you.')}catch(e){fail()}},
+  claim:async id=>{stopAlarm(id);const {data:ok,error}=await sb.rpc('claim_job',{p_request:String(id)});if(error)return fail();
+   if(!ok){setReqs(p=>p.filter(x=>x.id!==id));return setMsg('Sorry, another collector accepted this job first.')}
+   markAccepted(id);const {data:row}=await sb.from('requests').select('*').eq('id',id).maybeSingle();if(row)merge(row);setMsg('The job is yours. Start the trip when ready.')},
+  decline:async id=>{stopAlarm(id);const {error}=await sb.rpc('decline_job',{p_request:String(id)});if(error)return fail();setReqs(p=>p.filter(x=>x.id!==id));setMsg('Skipped.')},
+  avail:async on=>{
+   if(!on){const {error}=await sb.rpc('set_my_location',{p_lat:0,p_lng:0,p_available:false});if(error)return setMsg('Run auto-assign.sql in Supabase once, then try again.');setUser(u=>({...u,available:false}));return setMsg('You are offline. No new pickups will be assigned.')}
+   if(PUSH)OneSignalDeferred.push(OS=>OS.Notifications.requestPermission());else if('Notification' in window&&Notification.permission==='default')Notification.requestPermission();
+   if(!navigator.geolocation)return setMsg('GPS is not available on this device.');
+   setMsg('Finding your location…');
+   navigator.geolocation.getCurrentPosition(async p=>{const {error}=await sb.rpc('set_my_location',{p_lat:p.coords.latitude,p_lng:p.coords.longitude,p_available:true});
+    if(error)return setMsg('Run auto-assign.sql in Supabase once, then try again.');
+    setUser(u=>({...u,available:true}));setMsg('You are online. Nearby pickups will be assigned to you.');sb.rpc('retry_unassigned').then(()=>{})},
+    ()=>setMsg('Allow location access to go online.'),{enableHighAccuracy:true,timeout:15000})},
+  ping:(lat,lng,force)=>{const t=Date.now();if(!force&&t-lastLoc<30000)return;lastLoc=t;sb.rpc('set_my_location',{p_lat:lat,p_lng:lng,p_available:true}).then(()=>{})},
   pos:(id,lat,lng)=>{const t=Date.now();if(t-lastPos<4000)return;lastPos=t;sb.from('requests').update({pos:{lat,lng,t}}).eq('id',id).then(()=>{})},
   read:()=>{setNotes(n=>n.map(x=>({...x,read:true})));sb.from('notifications').update({is_read:true}).eq('is_read',false).then(()=>{})},
   pay:async(r,d)=>{const {data,error}=await sb.from('payments').insert({request_id:String(r.id),client:r.client,amount:Number(d.amount),provider:d.provider,phone:d.phone,ref:d.ref}).select().single();
    if(error){const m=(error.message||'')+' '+(error.code||'');setMsg(/PGRST205|42P01|schema cache|does not exist/i.test(m)?'Payments table is missing. Run payments.sql in Supabase, then reload.':'Payment failed: '+(error.message||'unknown error'));return false}
    setPays(p=>[toPay(data),...p.filter(x=>x.id!==data.id)]);note(`${r.client} paid K${data.amount} via ${d.provider} (ID ${d.ref}) for ${r.addr}. Confirm it under Sales.`);setMsg('Payment sent. We will confirm it shortly.');return true},
+  payNow:async(r,d)=>{const {data,error}=await sb.functions.invoke('pay-start',{body:{request_id:String(r.id),amount:d.amount,phone:d.phone,network:d.provider}});
+   if(error||!data||data.error){let m=(data&&data.error)||'';if(!m&&error&&error.context&&error.context.json){try{m=(await error.context.json()).error}catch(e){}}setMsg(m||'Could not start the payment. Try again.');return null}
+   const {data:row}=await sb.from('payments').select('*').eq('id',data.payment_id).maybeSingle();if(row)setPays(p=>[toPay(row),...p.filter(x=>x.id!==row.id)]);
+   setMsg('Check your phone and enter your mobile money PIN.');return data.payment_id},
+  refreshPay:async id=>{const {data}=await sb.from('payments').select('*').eq('id',id).maybeSingle();if(data)setPays(p=>[toPay(data),...p.filter(x=>x.id!==data.id)])},
+  setPayout:async(msisdn,provider)=>{const {error}=await sb.rpc('set_my_payout',{p_msisdn:msisdn,p_provider:provider});if(error)return setMsg('Run momo-payments.sql in Supabase once, then try again.');setUser(u=>({...u,payout_msisdn:msisdn,payout_provider:provider}));setMsg('Payout number saved.')},
+  retryPayout:async id=>{const {data,error}=await sb.functions.invoke('pay-callback',{body:{action:'retry',payout_id:id}});if(error||(data&&data.error))return setMsg('Retry failed. Try again.');setMsg('Payout retried.')},
   payOk:async(id,status)=>{const {data,error}=await sb.from('payments').update({status,confirmed:new Date().toISOString()}).eq('id',id).select().single();if(error)return fail();setPays(p=>p.map(x=>x.id===id?toPay(data):x));setMsg(status==='confirmed'?'Payment confirmed.':'Payment rejected.')},
   setRole:(id,role)=>sb.from('profiles').update({role}).eq('id',id).select().then(({data,error})=>{if(error||!data||!data.length)return setMsg('Could not change the role. Run block-users.sql in Supabase once.');setUsers(p=>p.map(x=>x.id===id?{...x,...data[0]}:x));setMsg('Role updated.')}),
   block:(id,b)=>sb.from('profiles').update({blocked:b}).eq('id',id).select().then(({data,error})=>{if(error||!data||!data.length)return setMsg('Could not update. Run block-users.sql in Supabase once.');setUsers(p=>p.map(x=>x.id===id?{...x,...data[0]}:x));setMsg(b?'User blocked.':'User unblocked.')})
