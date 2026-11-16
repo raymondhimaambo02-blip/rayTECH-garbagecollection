@@ -287,7 +287,7 @@ function PCard({r,mgr,children}){
   <span className="grow"><b>{r.type}</b>{mgr&&<span> · {r.client}</span>}<span className="mute" style={{display:'block'}}>{r.addr}</span></span>
   <span className={'pill '+r.status}>{LABEL[r.status]}</span><span className="chev">{o?'▲':'▼'}</span></button>
   <Stepper s={r.status}/>
-  {o&&<div className="pc-b"><div className="mute">🕒 {r.slot} · requested {ago(T(r))}</div>{r.notes&&<div>“{r.notes}”</div>}{r.rating&&<div className="mute">⭐ Rated {r.rating}/5</div>}{r.worker&&<div className="mute">🚛 {r.worker}{r.kg?` · ${r.kg} kg collected`:''}</div>}<TrackMap r={r}/><Proof r={r}/><Nav r={r}/>{r.worker_phone&&<Contact p={r.worker_phone} l="collector"/>}{mgr&&r.phone&&<Contact p={r.phone} l="client"/>}{!mgr&&r.status==='enroute'&&r.pos&&<button className="btn alt sm" style={{marginTop:12}} onClick={()=>shareTrack(r)}>🔗 Share collector location</button>}{children}</div>}</div>}
+  {o&&<div className="pc-b"><div className="mute">🕒 {r.slot} · requested {ago(T(r))}</div>{r.notes&&<div>“{r.notes}”</div>}{r.status==='requested'&&r.offered_to&&r.offered_to.length>0&&<div className="mute">📡 Offered to {r.offered_to.length} nearby collector{r.offered_to.length>1?'s':''}</div>}{r.rating&&<div className="mute">⭐ Rated {r.rating}/5</div>}{r.worker&&<div className="mute">🚛 {r.worker}{r.kg?` · ${r.kg} kg collected`:''}</div>}<TrackMap r={r}/><Proof r={r}/><Nav r={r}/>{r.worker_phone&&<Contact p={r.worker_phone} l="collector"/>}{mgr&&r.phone&&<Contact p={r.phone} l="client"/>}{!mgr&&r.status==='enroute'&&r.pos&&<button className="btn alt sm" style={{marginTop:12}} onClick={()=>shareTrack(r)}>🔗 Share collector location</button>}{children}</div>}</div>}
 function Bars({data}){const m=Math.max(1,...data.map(d=>d.v));return <svg viewBox={'0 0 '+data.length*40+' 104'} width="100%" role="img" aria-label="Pickups requested in the last 7 days">{data.map((d,i)=>{const h=d.v/m*60;return <g key={i}><rect x={i*40+6} y={78-h} width="28" height={Math.max(h,3)} rx="7" fill="var(--moss)" opacity={d.v?1:.25}/><text x={i*40+20} y={73-h} textAnchor="middle" fontSize="11" fill="var(--ink)">{d.v?(d.v>=1000?(d.v/1000).toFixed(1)+'k':d.v):''}</text><text x={i*40+20} y="98" textAnchor="middle" fontSize="11" fill="var(--mute)">{d.l}</text></g>})}</svg>}
 
 function Client({st,act,user}){
@@ -352,9 +352,18 @@ function Worker({st,act,user}){
  const done=st.reqs.filter(r=>r.worker===who&&r.status==='collected');
  const mp=usePaged(mine,3,'jobs'),dp=usePaged(done,5,'completed');
  const [kg,setKg]=useState({});const [ph,setPh]=useState({});const [busy,setBusy]=useState(null);const [wp,setWp]=useState(getPhone());
+ const offers=st.reqs.filter(r=>r.status==='requested'&&(r.offered_to||[]).includes(user.id));
+ const [on,setOn]=useState(!!user.available);
+ useEffect(()=>{if(!on)return;let stop=false;
+  const ping=()=>navigator.geolocation?navigator.geolocation.getCurrentPosition(p=>{if(!stop)sb.rpc('set_my_location',{p_lat:p.coords.latitude,p_lng:p.coords.longitude,p_available:true}).then(({error})=>{if(error)act.toast('Could not go online. Run auto-assign.sql in Supabase once.')})},()=>act.toast('Allow location access so nearby pickups can reach you.'),{enableHighAccuracy:true,timeout:15000,maximumAge:30000}):act.toast('GPS is not available on this device.');
+  ping();const t=setInterval(ping,60000);return()=>{stop=true;clearInterval(t)}},[on]);
+ const toggle=()=>{if(on){setOn(false);sb.rpc('set_my_location',{p_lat:0,p_lng:0,p_available:false}).then(()=>{});act.toast('You are offline.')}else{setOn(true);act.toast('You are online. Keep the app open to receive pickups.')}};
  useEffect(()=>{if(wp.replace(/\D/g,'').length<9)return;const t=setTimeout(()=>{try{localStorage.setItem('my_phone',wp)}catch(e){}mine.filter(r=>r.worker_phone!==wp).forEach(r=>sb.from('requests').update({worker_phone:wp}).eq('id',r.id).then(()=>{}))},800);return()=>clearTimeout(t)},[wp,mine.map(r=>r.id+(r.worker_phone||'')).join()]);
  return <div>
   <div className="hero fade"><div><div className="hi">Hello, {who.split(' ')[0]} 👷</div><div className="sub">{mine.length?mine.length+' to collect':'All caught up'}</div></div><div className="hstats">{[['To do',mine.length],['Done',done.length],['Kg',done.reduce((a,r)=>a+Number(r.kg||0),0)]].map(([l,v])=><div key={l}><b>{v}</b><span>{l}</span></div>)}</div></div>
+  <button type="button" className={'btn full'+(on?'':' alt')} style={{marginTop:0,marginBottom:14}} onClick={toggle}>{on?'🟢 Online: you receive nearby pickups (tap to go offline)':'⚪ Offline: tap to receive nearby pickups'}</button>
+  {offers.map(r=><div className="card live" key={r.id} role="alert"><div className="row"><div><b>🔔 New pickup nearby</b><div>{ICON[r.type]||'🗑️'} {r.type} · {r.addr}</div><div className="mute">{r.slot}</div></div></div><Nav r={r}/>
+   <div className="row" style={{marginTop:10}}><button className="btn" onClick={()=>act.claim(r.id)}>Accept</button><button className="btn alt" onClick={()=>act.decline(r.id)}>Skip</button></div></div>)}
   <div className="card"><label htmlFor="wph" style={{margin:0}}>Your phone / WhatsApp (shared with clients on your jobs)</label><input id="wph" type="tel" inputMode="tel" value={wp} onChange={e=>setWp(e.target.value)} placeholder="e.g. 097 1234567"/></div>
   {mine.length===0&&<div className="card empty">No jobs assigned. The manager will assign pickups to you.</div>}
   {mp.items.map(r=><div className="card" key={r.id}><div className="row"><div><h3>{r.addr}</h3><div className="mute">{r.client} · {r.type}</div><div className="mute">{r.slot}</div>{r.notes&&<div style={{marginTop:6}}>“{r.notes}”</div>}</div><span className={'pill '+r.status}>{LABEL[r.status]}</span></div>
@@ -662,6 +671,7 @@ function App(){
    if(p.eventType==='DELETE'){stopAlarm(p.old.id);setReqs(prev=>prev.filter(x=>x.id!==p.old.id))}
    else{const n=p.new;
     if(n.worker_id===user.id&&n.status==='assigned'){if(!getAccepted().includes(n.id)&&!PENDING.has(n.id))startAlarm(n.id)}
+    else if(n.status==='requested'&&n.offered_to&&n.offered_to.includes(user.id)){if(!PENDING.has(n.id))startAlarm(n.id)}
     else stopAlarm(n.id);
     merge(n)}});
   if(mgr)ch=ch.on('postgres_changes',{event:'*',schema:'public',table:'notifications'},p=>{
@@ -676,6 +686,12 @@ function App(){
   const c=sb.channel('me-'+user.id).on('postgres_changes',{event:'UPDATE',schema:'public',table:'profiles',filter:'id=eq.'+user.id},p=>{const n=p.new;
    if(n.blocked){setMsg('Your account has been blocked. Contact RayTECH.');sb.auth.signOut()}else setUser(u=>({...u,...n}))}).subscribe();
   return()=>{sb.removeChannel(c)}},[user&&user.id]);
+ useEffect(()=>{if(!configured||!user)return;
+  const tick=()=>{sb.rpc('retry_unassigned').then(()=>{});
+   if(user.role==='worker')sb.from('requests').select('*').order('created',{ascending:false}).then(({data})=>{if(!data)return;setReqs(data.map(toReq));
+    const mine=r=>(r.status==='requested'&&(r.offered_to||[]).includes(user.id))||(r.worker_id===user.id&&r.status==='assigned'&&!r.accepted&&!getAccepted().includes(r.id));
+    data.forEach(r=>{if(mine(r)&&!PENDING.has(r.id))startAlarm(r.id)});[...PENDING].forEach(id=>{if(!data.some(r=>r.id===id&&mine(r)))stopAlarm(id)})})};
+  tick();const t=setInterval(tick,30000);return()=>clearInterval(t)},[user&&user.id,user&&user.role]);
  useEffect(()=>{if(!user||!PUSH)return;OneSignalDeferred.push(OS=>{OS.login(user.id);setPushOn(!!OS.Notifications.permission)})},[user&&user.id]);
  useEffect(()=>{if(!msg)return;const t=setTimeout(()=>setMsg(''),3500);return()=>clearTimeout(t)},[msg]);
  const enablePush=()=>OneSignalDeferred.push(async OS=>{await OS.Notifications.requestPermission();const on=!!OS.Notifications.permission;setPushOn(on);setMsg(on?'Alerts turned on for this phone.':'Alerts are blocked. Allow notifications in your browser settings.')});
@@ -684,6 +700,10 @@ function App(){
  const fail=()=>setMsg('Something went wrong. Check your connection and try again.');
  const act={
   toast:setMsg,
+  claim:async id=>{const {data,error}=await sb.rpc('claim_job',{p_request:String(id)});stopAlarm(id);if(error)return fail();
+   if(!data){setReqs(p=>p.filter(x=>x.id!==id));return setMsg('Too late. Another collector took it, or you already have an active job.')}
+   markAccepted(id);setMsg('Job accepted. Manager notified.');const {data:row}=await sb.from('requests').select('*').eq('id',id).single();if(row)merge(row)},
+  decline:async id=>{stopAlarm(id);await sb.rpc('decline_job',{p_request:String(id)});setReqs(p=>p.filter(x=>x.id!==id));setMsg('Skipped. It goes to the next collector.')},
   rate:(id,n)=>sb.rpc('rate_pickup',{rid:String(id),stars:n}).then(({error})=>{if(error)setMsg('Rating saved on this phone only. Run medium-features.sql in Supabase once.')}),
   resched:async(id,slot)=>{const r=reqs.find(x=>x.id===id);const {error}=await sb.rpc('reschedule_pickup',{rid:String(id),new_slot:slot});if(error){setMsg('Could not change the time. Run medium-features.sql in Supabase once.');return false}
    setReqs(p=>p.map(x=>x.id===id?{...x,slot}:x));if(r)note(`${user.name} changed the pickup time at ${r.addr} to ${slot}.`);setMsg('Time updated.');return true},
@@ -692,14 +712,14 @@ function App(){
     const {data,error}=await sb.from('requests').delete().in('id',part).select('id');
     if(error)return setMsg('Could not delete. Check your connection and try again.');
     gone=gone.concat((data||[]).map(x=>x.id))}
-   if(!gone.length)return setMsg('Nothing was deleted. Run delete-jobs.sql in Supabase once, then try again.');
+   if(!gone.length)return setMsg('Nothing was deleted. Run fix-delete.sql in Supabase once, then try again.');
    gone.forEach(stopAlarm);setReqs(p=>p.filter(x=>!gone.includes(x.id)));
    sb.storage.from('proofs').remove(gone.map(i=>i+'.jpg')).then(()=>{});
    setMsg(gone.length===1?'Pickup deleted.':gone.length+' pickups deleted.')},
-  accept:id=>{const r=reqs.find(x=>x.id===id);markAccepted(id);stopAlarm(id);if(r)note(`${r.worker||user.name} accepted the pickup at ${r.addr}.`);setMsg('Job accepted. Manager notified.')},
+  accept:id=>{const r=reqs.find(x=>x.id===id);markAccepted(id);sb.rpc('accept_job',{p_request:String(id)}).then(()=>{});stopAlarm(id);if(r)note(`${r.worker||user.name} accepted the pickup at ${r.addr}.`);setMsg('Job accepted. Manager notified.')},
   add:async f=>{const row={uid:user.id,client:f.client,addr:f.addr,type:f.type,slot:f.slot,notes:f.notes,lat:f.lat,lng:f.lng};let {data,error}=await sb.from('requests').insert({...row,phone:f.phone||null}).select().single();
    if(error&&/phone/i.test(error.message||''))({data,error}=await sb.from('requests').insert(row).select().single());
-   if(error)return fail();merge(data);note(`New pickup request from ${f.client}: ${f.type} at ${f.addr}.`);setMsg('Pickup requested. We will assign a collector soon.')},
+   if(error)return fail();merge(data);sb.rpc('auto_assign',{p_request:String(data.id)}).then(()=>{});note(`New pickup request from ${f.client}: ${f.type} at ${f.addr}.`);setMsg('Pickup requested. We will assign a collector soon.')},
   assign:async(id,name)=>{const w=users.find(u=>u.role==='worker'&&!u.blocked&&u.name===name);const r=reqs.find(x=>x.id===id);
    const {data,error}=await sb.from('requests').update({worker:w?w.name:null,worker_id:w?w.id:null,status:w?'assigned':'requested'}).eq('id',id).select().single();
    if(error)return fail();merge(data);if(w)note(`${w.name} assigned to ${r.addr}.`)},
