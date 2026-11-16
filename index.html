@@ -269,12 +269,12 @@ function PCard({r,mgr,children}){
   <span className={'pill '+r.status}>{LABEL[r.status]}</span><span className="chev">{o?'▲':'▼'}</span></button>
   <Stepper s={r.status}/>
   {r.status==='requested'&&<div className="mute" style={{marginTop:8}}>🔎 {mgr?'Offered to nearby collectors; retrying every 30 s until one accepts':'Nearby collectors are being alerted. The first to accept gets your pickup.'}{r.assign_tries>0?` · attempt ${r.assign_tries}`:''}</div>}
-  {o&&<div className="pc-b"><div className="mute">🕒 {r.slot} · requested {ago(T(r))}</div>{r.notes&&<div>“{r.notes}”</div>}{r.worker&&<div className="mute">🚛 {r.worker}{r.kg?` · ${r.kg} kg collected`:''}</div>}{r.worker&&r.collector_phone&&r.status!=='collected'&&<a className="btn alt sm" style={CALL_BTN} href={telHref(r.collector_phone)}>📞 Call collector · {r.collector_phone}</a>}{mgr&&r.client_phone&&<a className="btn alt sm" style={CALL_BTN} href={telHref(r.client_phone)}>📞 Call client · {r.client_phone}</a>}<TrackMap r={r}/><Proof r={r}/><Nav r={r}/>{children}</div>}</div>}
+  {o&&<div className="pc-b"><div className="mute">🕒 {r.slot} · requested {ago(T(r))}</div>{r.notes&&<div>“{r.notes}”</div>}{r.worker&&<div className="mute">🚛 {r.worker}{r.kg?` · ${r.kg} kg collected`:''}</div>}{r.worker&&r.collector_phone&&r.status!=='collected'&&<a className="btn alt sm" style={CALL_BTN} href={telHref(r.collector_phone)}>📞 Call collector</a>}{mgr&&r.client_phone&&<a className="btn alt sm" style={CALL_BTN} href={telHref(r.client_phone)}>📞 Call client</a>}<TrackMap r={r}/><Proof r={r}/><Nav r={r}/>{children}</div>}</div>}
 function Bars({data}){const m=Math.max(1,...data.map(d=>d.v));return <svg viewBox={'0 0 '+data.length*40+' 104'} width="100%" role="img" aria-label="Pickups requested in the last 7 days">{data.map((d,i)=>{const h=d.v/m*60;return <g key={i}><rect x={i*40+6} y={78-h} width="28" height={Math.max(h,3)} rx="7" fill="var(--moss)" opacity={d.v?1:.25}/><text x={i*40+20} y={73-h} textAnchor="middle" fontSize="11" fill="var(--ink)">{d.v?(d.v>=1000?(d.v/1000).toFixed(1)+'k':d.v):''}</text><text x={i*40+20} y="98" textAnchor="middle" fontSize="11" fill="var(--mute)">{d.l}</text></g>})}</svg>}
 
 function Client({st,act,user}){
  const [tab,setTab]=useState('new');
- const [f,setF]=useState({client:user.name,phone:user.phone||'',addr:'',type:TYPES[0],slot:'Today 10:00–12:00',notes:'',lat:null,lng:null});
+ const [f,setF]=useState({client:user.name,addr:'',type:TYPES[0],slot:'Today 10:00–12:00',notes:'',lat:null,lng:null});
  const [q,setQ]=useState(''),[fl,setFl]=useState('all');
  const set=k=>e=>setF({...f,[k]:e.target.value});
  const mine=st.reqs.filter(r=>r.uid===user.id);
@@ -287,7 +287,7 @@ function Client({st,act,user}){
   if(!navigator.geolocation)return act.toast('GPS is not available on this device. Type the address instead.');
   act.toast('Finding your location…');
   navigator.geolocation.getCurrentPosition(p=>{const lat=p.coords.latitude,lng=p.coords.longitude;setF(x=>({...x,lat,lng,addr:x.addr.trim()?x.addr:'GPS location '+lat.toFixed(5)+', '+lng.toFixed(5)}));act.toast('Location pinned.')},()=>act.toast('Could not get your location. Allow location access or type the address.'),{enableHighAccuracy:true,timeout:15000})};
- const submit=async()=>{if(!f.client.trim()||!f.addr.trim())return act.toast('Enter your name and pickup address.');if(!okPhone(f.phone))return act.toast('Enter a 10-digit phone number, e.g. 0977123456.');await act.add({...f,uid:user.id});setF({...f,notes:'',lat:null,lng:null});setTab('mine')};
+ const submit=async()=>{if(!f.client.trim()||!f.addr.trim())return act.toast('Enter your name and pickup address.');if(!okPhone(user.phone))return act.toast('Save your 10-digit phone number first (card below), then request.');await act.add({...f,uid:user.id,phone:user.phone});setF({...f,notes:'',lat:null,lng:null});setTab('mine')};
  const again=r=>{setF({...f,addr:r.addr,type:r.type,lat:r.lat,lng:r.lng});setTab('new');window.scrollTo({top:0,behavior:'smooth'});act.toast('Details copied. Choose a slot and send.')};
  return <div className="fade">
   <div className="hero"><div><div className="hi">Hi {(user.name||'').split(' ')[0]} 👋</div><div className="sub">Clean pickups, tracked live.</div></div>
@@ -297,12 +297,12 @@ function Client({st,act,user}){
   {tab==='new'&&<div className="card"><h2>Request a pickup</h2>
    <label>Waste type</label><div className="tiles">{TYPES.map(t=><button key={t} type="button" className={'tile'+(f.type===t?' on':'')} onClick={()=>setF({...f,type:t})}><span>{ICON[t]}</span>{t}</button>)}</div>
    <label htmlFor="n">Your name</label><input id="n" value={f.client} onChange={set('client')} placeholder="e.g. Grace Phiri"/>
-   <label htmlFor="ph">Your phone number</label><input id="ph" type="tel" inputMode="tel" maxLength="13" value={f.phone} onChange={set('phone')} placeholder="10 digits, e.g. 0977123456"/><div className="mute" style={{marginTop:4}}>Your collector can call this number once they accept.</div>
    <label htmlFor="a">Pickup address</label><input id="a" value={f.addr} onChange={set('addr')} placeholder="Type street and area"/>
    <div className="row" style={{marginTop:8,alignItems:'center'}}><button type="button" className="btn alt sm" onClick={gps}>📍 Use my GPS location</button>{f.lat!=null&&<span className="mute">Pinned {f.lat.toFixed(5)}, {f.lng.toFixed(5)} <button className="link" onClick={()=>setF({...f,lat:null,lng:null})}>Clear</button></span>}</div>
    <label>Time slot</label><Chips val={f.slot} set={v=>setF({...f,slot:v})} opts={['Today 10:00–12:00','Today 14:00–16:00','Tomorrow 08:00–10:00','Tomorrow 12:00–14:00'].map(x=>[x,x])}/>
    <label htmlFor="o">Notes for the crew</label><textarea id="o" rows="2" value={f.notes} onChange={set('notes')} placeholder="Where to find the waste"/>
    <button className="btn full" onClick={submit}>Request pickup</button></div>}
+  {tab==='new'&&<PhoneCard user={user} act={act}/>}
   {tab==='mine'&&<div>
    <Search v={q} set={v=>{setQ(v);pg.reset()}} ph="Search address, type or collector"/>
    <Chips val={fl} set={v=>{setFl(v);pg.reset()}} opts={[['all','All',mine.length],['active','Active',act1.length],['done','Completed',dn.length]]}/>
@@ -312,8 +312,8 @@ function Client({st,act,user}){
  </div>
 }
 
-function PhoneCard({user,act}){const [v,setV]=useState(user.phone||user.payout_msisdn||'');const same=(user.phone||'')===normPhone(v);
- return <div className="card"><h3>📞 Your phone number</h3><div className="mute">Clients call this number from the app after you accept their pickup.</div><div className="row" style={{marginTop:8,gap:8}}><input type="tel" inputMode="tel" maxLength="13" value={v} onChange={e=>setV(e.target.value)} placeholder="10 digits, e.g. 0977123456" style={{flex:1}}/><button className="btn sm" disabled={same||!okPhone(v)} onClick={()=>act.setPhone(normPhone(v))}>Save</button></div></div>}
+function PhoneCard({user,act}){const [v,setV]=useState(user.phone||'');const same=(user.phone||'')===normPhone(v);
+ return <div className="card"><h3>📞 Your phone number</h3><div className="mute">Used for the Call button, so your collector or client can reach you. Update it here any time.</div><div className="row" style={{marginTop:8,gap:8}}><input type="tel" inputMode="tel" maxLength="13" value={v} onChange={e=>setV(e.target.value)} placeholder="10 digits, e.g. 0977123456" style={{flex:1}}/><button className="btn sm" disabled={same||!okPhone(v)} onClick={()=>act.setPhone(normPhone(v))}>Save</button></div></div>}
 function Worker({st,act,user}){
  const who=user.name;
  const mine=st.reqs.filter(r=>r.worker===who&&r.status!=='collected');
@@ -336,7 +336,7 @@ function Worker({st,act,user}){
   {offers.map(r=><div className="card" key={'o'+r.id} style={{border:'2px solid var(--amber)'}}><div className="row"><div><h3>🔔 New pickup nearby</h3><div className="mute">{ICON[r.type]||'🗑️'} {r.type} · {r.addr}</div>{r.lat!=null&&user.lat!=null&&<div className="mute">{fmt(dist(user.lat,user.lng,r.lat,r.lng))} from you</div>}<div className="mute">{r.slot}</div>{r.notes&&<div style={{marginTop:6}}>“{r.notes}”</div>}</div><span className="pill requested">First to accept gets it</span></div>
    <div className="row" style={{gap:8,marginTop:10}}><button className="btn warn full" onClick={()=>act.claim(r.id)}>Accept job</button><button className="btn alt full" onClick={()=>act.decline(r.id)}>Skip</button></div></div>)}
   {mine.length===0&&offers.length===0&&<div className="card empty">{user.available?'No jobs yet. You will be alerted when a nearby pickup is assigned.':'No jobs assigned. Go online to receive nearby pickups.'}</div>}
-  {mp.items.map(r=><div className="card" key={r.id}><div className="row"><div><h3>{r.addr}</h3><div className="mute">{r.client} · {r.type}</div><div className="mute">{r.slot}</div>{r.notes&&<div style={{marginTop:6}}>“{r.notes}”</div>}{r.client_phone&&<a className="btn sm" style={CALL_BTN} href={telHref(r.client_phone)}>📞 Call client · {r.client_phone}</a>}</div><span className={'pill '+r.status}>{LABEL[r.status]}</span></div>
+  {mp.items.map(r=><div className="card" key={r.id}><div className="row"><div><h3>{r.addr}</h3><div className="mute">{r.client} · {r.type}</div><div className="mute">{r.slot}</div>{r.notes&&<div style={{marginTop:6}}>“{r.notes}”</div>}{r.client_phone&&<a className="btn sm" style={CALL_BTN} href={telHref(r.client_phone)}>📞 Call client</a>}</div><span className={'pill '+r.status}>{LABEL[r.status]}</span></div>
    <Track s={r.status}/>
    <Nav r={r}/>{r.status==='enroute'&&<Live r={r} act={act}/>}
    {r.status==='assigned'&&PENDING.has(r.id)&&<div className="row" style={{gap:8}}><button className="btn warn full" onClick={()=>act.accept(r.id)}>Accept job (stop alarm)</button><button className="btn alt full" onClick={()=>{if(confirm('Pass this pickup to the next collector?'))act.decline(r.id)}}>Decline</button></div>}
@@ -572,16 +572,17 @@ const toNote=x=>({id:x.id,text:x.text,read:x.is_read,time:new Date(x.created).to
 
 function Auth({msg,setMsg}){
  const [mode,setMode]=useState('login');
- const [f,setF]=useState({name:'',email:'',pw:'',pw2:''});
+ const [f,setF]=useState({name:'',phone:'',email:'',pw:'',pw2:''});
  const set=k=>e=>setF({...f,[k]:e.target.value});
  const em=f.email.trim().toLowerCase();
  const go=m=>{setMode(m);setMsg('');setF({...f,pw:'',pw2:''})};
  const login=async()=>{const {error}=await sb.auth.signInWithPassword({email:em,password:f.pw});if(error)setMsg(errTxt(error))};
  const register=async()=>{
   if(!f.name.trim())return setMsg('Enter your full name.');
+  if(!okPhone(f.phone))return setMsg('Enter a 10-digit phone number, e.g. 0977123456.');
   if(f.pw.length<6)return setMsg('Password must be at least 6 characters.');
   if(f.pw!==f.pw2)return setMsg('Passwords do not match.');
-  const {data,error}=await sb.auth.signUp({email:em,password:f.pw,options:{data:{name:f.name.trim()}}});
+  const {data,error}=await sb.auth.signUp({email:em,password:f.pw,options:{data:{name:f.name.trim(),phone:normPhone(f.phone)}}});
   if(error)return setMsg(errTxt(error));
   if(!data.session){go('login');setMsg('Account created. Check your email to confirm, then log in.')}};
  const forgot=async()=>{if(!em)return setMsg('Enter your account email.');const {error}=await sb.auth.resetPasswordForEmail(em,{redirectTo:location.href.split('#')[0]});setMsg(error?errTxt(error):'Reset link sent. Check your inbox and spam folder.')};
@@ -593,7 +594,7 @@ function Auth({msg,setMsg}){
    {mode==='login'&&<div>{field('e','Email','email','email','you@example.com')}{field('p','Password','pw','password')}
     <button className="btn full" onClick={login}>Log in</button>
     <div className="row" style={{marginTop:8}}><button className="link" onClick={()=>go('forgot')}>Forgot password?</button><button className="link" onClick={()=>go('register')}>Create account</button></div></div>}
-   {mode==='register'&&<div>{field('n','Full name','name')}{field('e','Email','email','email')}{field('p','Password','pw','password','At least 6 characters')}{field('p2','Confirm password','pw2','password')}
+   {mode==='register'&&<div>{field('n','Full name','name')}{field('ph','Phone number (10 digits)','phone','tel','e.g. 0977123456')}{field('e','Email','email','email')}{field('p','Password','pw','password','At least 6 characters')}{field('p2','Confirm password','pw2','password')}
     <button className="btn full" onClick={register}>Create account</button>
     <div className="mute" style={{marginTop:8}}>Collectors and managers: register here, then ask your RayTECH manager to set your role.</div>
     <button className="link" onClick={()=>go('login')}>Back to log in</button></div>}
@@ -638,7 +639,7 @@ function App(){
  useEffect(()=>{if(!configured||session===undefined)return;
   if(!session){setUser(null);setReqs([]);setNotes([]);setUsers([]);setPays([]);setPouts([]);return}
   let off=false;
-  (async()=>{for(let i=0;i<5;i++){const {data}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();if(off)return;if(data){if(data.blocked){setMsg('Your account has been blocked. Contact RayTECH.');sb.auth.signOut();return}setUser(data);return}await new Promise(r=>setTimeout(r,500))}
+  (async()=>{for(let i=0;i<5;i++){const {data}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();if(off)return;if(data){if(data.blocked){setMsg('Your account has been blocked. Contact RayTECH.');sb.auth.signOut();return}let u=data;const mp=session.user.user_metadata&&session.user.user_metadata.phone;if(!u.phone&&mp){sb.rpc('set_my_phone',{p_phone:mp}).then(()=>{});u={...u,phone:mp}}setUser(u);return}await new Promise(r=>setTimeout(r,500))}
    setMsg('Account profile not found. Ask your manager for help.');sb.auth.signOut()})();
   return()=>{off=true}},[uid,session===undefined]);
  useEffect(()=>{if(!configured||!user)return;
@@ -702,7 +703,7 @@ function App(){
   setPhone:async p=>{const {error}=await sb.rpc('set_my_phone',{p_phone:p});if(error)return setMsg('Run phone-numbers.sql in Supabase once, then try again.');setUser(u=>({...u,phone:p}));setMsg('Phone number saved.')},
   accept:id=>{const r=reqs.find(x=>x.id===id);markAccepted(id);stopAlarm(id);sb.rpc('accept_job',{p_request:String(id)}).then(()=>{});if(r)note(`${r.worker||user.name} accepted the pickup at ${r.addr}.`);setMsg('Job accepted. Manager notified.')},
   add:async f=>{const {data,error}=await sb.from('requests').insert({uid:user.id,client:f.client,addr:f.addr,type:f.type,slot:f.slot,notes:f.notes,lat:f.lat,lng:f.lng,client_phone:normPhone(f.phone)||null}).select().single();
-   if(error)return fail();merge(data);if(f.phone)sb.rpc('set_my_phone',{p_phone:normPhone(f.phone)}).then(()=>setUser(u=>({...u,phone:normPhone(f.phone)})));note(`New pickup request from ${f.client}: ${f.type} at ${f.addr}.`);
+   if(error)return fail();merge(data);note(`New pickup request from ${f.client}: ${f.type} at ${f.addr}.`);
    setMsg('Pickup requested. Alerting nearby collectors…');
    const {data:ok,error:ae}=await sb.rpc('auto_assign',{p_request:String(data.id)});
    if(ae)return setMsg('Pickup requested. Run auto-assign.sql in Supabase once to enable auto-assign.');
