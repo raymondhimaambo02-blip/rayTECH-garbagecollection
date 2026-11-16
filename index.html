@@ -252,7 +252,7 @@ const getLang=()=>{try{return localStorage.getItem('nav_lang')||'en'}catch(e){re
 function tts(text){try{if(!window.speechSynthesis)return;const u=new SpeechSynthesisUtterance(text);u.lang='en-GB';u.rate=1;u.volume=VOL;const v=speechSynthesis.getVoices().find(v=>/^en/i.test(v.lang));if(v)u.voice=v;speechSynthesis.cancel();speechSynthesis.speak(u)}catch(e){}}
 // Bemba/Nyanja: put recordings in voice/bem/<key>.mp3 and voice/nya/<key>.mp3 (keys like turn-left, arrive-). Missing files fall back to English speech.
 function say(text){if(!VOICE_ON||VOL<=0)return;const l=getLang();
- if(l!=='en'&&KEY){try{const a=new Audio('voice/'+l+'/'+KEY+'.mp3');a.volume=VOL;a.onerror=()=>tts(text);a.play().catch(()=>tts(text));return}catch(e){}}
+ if(l!=='en'&&KEY){try{const a=new Audio('voice/'+l+'/'+KEY+'.mp3');let fb=0;const f=()=>{if(!fb){fb=1;tts(text)}};a.volume=VOL;a.onerror=f;a.play().catch(f);return}catch(e){}}
  tts(text)}
 const cacheRoute=(id,rt)=>{try{localStorage.setItem('route_'+id,JSON.stringify(rt))}catch(e){}};
 const cachedRoute=id=>{try{return JSON.parse(localStorage.getItem('route_'+id)||'null')}catch(e){return null}};
