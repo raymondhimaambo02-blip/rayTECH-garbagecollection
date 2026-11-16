@@ -161,7 +161,7 @@ const SUPABASE_KEY='sb_publishable_XLYKroCRtT-avUHH3-Qjjw__tRa3rCE';
 const OS_ID='YOUR_ONESIGNAL_APP_ID';
 const configured=!SUPABASE_URL.includes('YOUR_PROJECT_REF');
 const sb=configured?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
-let lastPos=0;
+let lastPos=0,HOME=null;
 window.OneSignalDeferred=window.OneSignalDeferred||[];
 if(configured&&!OS_ID.startsWith('YOUR_'))OneSignalDeferred.push(OS=>OS.init({appId:OS_ID}));
 const PUSH=!OS_ID.startsWith('YOUR_');
@@ -444,6 +444,14 @@ function PCard({r,mgr,children}){
   {o&&<div className="pc-b"><div className="mute">🕒 {r.slot} · requested {ago(T(r))}</div>{r.notes&&<div>“{r.notes}”</div>}{r.status==='requested'&&r.offered_to&&r.offered_to.length>0&&<div className="mute">📡 Offered to {r.offered_to.length} nearby collector{r.offered_to.length>1?'s':''}</div>}{r.rating&&<div className="mute">⭐ Rated {r.rating}/5</div>}{r.worker&&<div className="mute">🚛 {r.worker}{r.kg?` · ${r.kg} kg collected`:''}</div>}<TrackMap r={r} alertMe={!mgr}/><Proof r={r}/><Nav r={r}/>{r.worker_phone&&<Contact p={r.worker_phone} l="collector"/>}{mgr&&r.phone&&<Contact p={r.phone} l="client"/>}{!mgr&&r.status==='enroute'&&r.pos&&<button className="btn alt sm" style={{marginTop:12}} onClick={()=>shareTrack(r)}>🔗 Share collector location</button>}{children}</div>}</div>}
 function Bars({data}){const m=Math.max(1,...data.map(d=>d.v));return <svg viewBox={'0 0 '+data.length*40+' 104'} width="100%" role="img" aria-label="Pickups requested in the last 7 days">{data.map((d,i)=>{const h=d.v/m*60;return <g key={i}><rect x={i*40+6} y={78-h} width="28" height={Math.max(h,3)} rx="7" fill="var(--moss)" opacity={d.v?1:.25}/><text x={i*40+20} y={73-h} textAnchor="middle" fontSize="11" fill="var(--ink)">{d.v?(d.v>=1000?(d.v/1000).toFixed(1)+'k':d.v):''}</text><text x={i*40+20} y="98" textAnchor="middle" fontSize="11" fill="var(--mute)">{d.l}</text></g>})}</svg>}
 
+function PinPicker({lat,lng,onDone,onCancel}){const el=React.useRef(null),pos=React.useRef({lat,lng});
+ useEffect(()=>{if(!window.L||!el.current)return;const L=window.L,map=L.map(el.current).setView([lat,lng],17);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+  const mk=L.marker([lat,lng],{draggable:true,icon:L.divIcon({className:'',html:'<div class="mk home">📍</div>',iconSize:[40,40],iconAnchor:[20,36]})}).addTo(map);
+  const mv=ll=>{pos.current={lat:ll.lat,lng:ll.lng}};mk.on('dragend',()=>mv(mk.getLatLng()));map.on('click',e=>{mk.setLatLng(e.latlng);mv(e.latlng)});
+  setTimeout(()=>map.invalidateSize(),250);return()=>map.remove()},[]);
+ if(!window.L)return <div className="mute">The map could not load. Check your connection.</div>;
+ return <div className="codebox"><div className="lmap"><div ref={el} style={{height:300}} role="img" aria-label="Map to place the pickup pin"/></div><div className="mute" style={{marginTop:6}}>Drag the pin, or tap the map, to the exact gate or bin spot.</div><div className="row" style={{marginTop:8}}><button type="button" className="btn sm" onClick={()=>onDone(pos.current.lat,pos.current.lng)}>✅ Use this spot</button><button type="button" className="link" onClick={onCancel}>Cancel</button></div></div>}
 function Client({st,act,user}){
  const [tab,setTab]=useState('new');
  const [f,setF]=useState({client:user.name,addr:'',type:TYPES[0],slot:'Today 10:00–12:00',notes:'',lat:null,lng:null,phone:getPhone()});
@@ -451,13 +459,20 @@ function Client({st,act,user}){
  const set=k=>e=>setF({...f,[k]:e.target.value});
  const [cd,setCd]=useState(''),[ct,setCt]=useState('');
  const [sug,setSug]=useState([]);
- const [sMsg,setSMsg]=useState('');
+ const [sMsg,setSMsg]=useState(''),[pin,setPin]=useState(false);
  const NOM='https://nominatim.openstreetmap.org/',PH='https://photon.komoot.io/';
  const short=n=>String(n).split(', ').slice(0,4).join(', ');
  const fromPhoton=d=>((d&&d.features)||[]).filter(x=>!x.properties.countrycode||x.properties.countrycode==='ZM').map(x=>{const p=x.properties;const nm=[p.name||((p.street||'')+' '+(p.housenumber||'')).trim(),p.district,p.city||p.county,p.state].filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i).join(', ');return {place_id:'p'+p.osm_id+(p.osm_type||''),display_name:nm,lat:x.geometry.coordinates[1],lon:x.geometry.coordinates[0]}}).filter(x=>x.display_name);
  const getJ=async u=>{const c=new AbortController(),t=setTimeout(()=>c.abort(),8000);try{const r=await fetch(u,{signal:c.signal});if(!r.ok)throw 0;return await r.json()}catch(e){return null}finally{clearTimeout(t)}};
- const geoSearch=async qq=>{const n=await getJ(NOM+'search?format=jsonv2&limit=6&countrycodes=zm&accept-language=en&q='+encodeURIComponent(qq));if(n&&n.length)return n;
-  const p=await getJ(PH+'api/?limit=8&lang=en&lat=-15.42&lon=28.28&q='+encodeURIComponent(qq));return p?fromPhoton(p):n};
+ const fromNom=n=>(n||[]).map(x=>{const a=x.address||{};const nm=[x.name||((a.road||'')+' '+(a.house_number||'')).trim(),x.name?a.road:'',a.neighbourhood||a.suburb||a.quarter,a.city||a.town||a.village||a.county,a.state].filter(Boolean).filter((v,i,ar)=>ar.indexOf(v)===i).join(', ');return {place_id:'n'+x.place_id,display_name:nm||x.display_name,lat:x.lat,lon:x.lon}});
+ // search 3 ways at once (as typed, "+ Lusaka", Photon biased to you), then merge, remove duplicates and rank: name match first, then nearest to you
+ const geoSearch=async qq=>{const ref=HOME||(f.lat!=null?{lat:f.lat,lng:f.lng}:{lat:-15.4167,lng:28.2833}),vb='&viewbox=28.0,-15.2,28.6,-15.7&bounded=0',nb=NOM+'search?format=jsonv2&addressdetails=1&limit=8&countrycodes=zm&accept-language=en'+vb+'&q=';
+  const qs=[getJ(nb+encodeURIComponent(qq)),/lusaka/i.test(qq)?Promise.resolve([]):getJ(nb+encodeURIComponent(qq+' Lusaka')),getJ(PH+'api/?limit=8&lang=en&lat='+ref.lat+'&lon='+ref.lng+'&location_bias_scale=0.5&q='+encodeURIComponent(qq))];
+  const [n1,n2,p]=await Promise.all(qs);if(n1===null&&n2===null&&p===null)return null;
+  const all=[...fromNom(n1),...fromNom(n2),...(p?fromPhoton(p):[])],seen={},low=qq.toLowerCase().trim();
+  return all.filter(x=>{const k=String(x.display_name).split(',')[0].toLowerCase()+'|'+(+x.lat).toFixed(3)+(+x.lon).toFixed(3);if(seen[k])return false;seen[k]=1;return true})
+   .map(x=>({...x,d:dist(ref.lat,ref.lng,+x.lat,+x.lon),m:String(x.display_name).split(',')[0].toLowerCase().includes(low)?0:1}))
+   .sort((a,b)=>a.m-b.m||a.d-b.d).slice(0,8).map(x=>({...x,d:HOME?x.d:null}))};
  const revGeo=async(lat,lng)=>{const n=await getJ(NOM+'reverse?format=jsonv2&zoom=18&accept-language=en&lat='+lat+'&lon='+lng);if(n&&n.display_name)return short(n.display_name);
   const r=fromPhoton(await getJ(PH+'reverse?lang=en&lat='+lat+'&lon='+lng));return r.length?short(r[0].display_name):null};
  useEffect(()=>{const qq=f.addr.trim();if(f.auto||qq.length<3){setSug([]);setSMsg('');return}setSMsg('Searching…');
@@ -480,7 +495,7 @@ function Client({st,act,user}){
  const gps=()=>{
   if(!navigator.geolocation)return act.toast('GPS is not available on this device. Type the address instead.');
   act.toast('Finding your location…');
-  navigator.geolocation.getCurrentPosition(async p=>{const lat=p.coords.latitude,lng=p.coords.longitude;setF(x=>({...x,lat,lng,addr:x.addr.trim()?x.addr:'GPS location '+lat.toFixed(5)+', '+lng.toFixed(5)}));act.toast('Location pinned. Finding the address…');
+  navigator.geolocation.getCurrentPosition(async p=>{const lat=p.coords.latitude,lng=p.coords.longitude;HOME={lat,lng};setF(x=>({...x,lat,lng,addr:x.addr.trim()?x.addr:'GPS location '+lat.toFixed(5)+', '+lng.toFixed(5)}));act.toast('Location pinned. Finding the address…');
    const a=await revGeo(lat,lng);if(a){setF(x=>(!x.addr.trim()||x.addr.startsWith('GPS location')||x.auto)?{...x,addr:a,auto:true}:x);act.toast('Address found: '+a)}else act.toast('Location pinned, but no address was found. Please type it in.')},()=>act.toast('Could not get your location. Allow location access or type the address.'),{enableHighAccuracy:true,timeout:15000})};
  const submit=async()=>{try{localStorage.setItem('my_phone',f.phone||'')}catch(e){}
   if(!f.client.trim()||!f.addr.trim())return act.toast('Enter your name and pickup address.');
@@ -497,9 +512,10 @@ function Client({st,act,user}){
    <label htmlFor="n">Your name</label><input id="n" value={f.client} onChange={set('client')} placeholder="e.g. Grace Phiri"/>
    <label htmlFor="ph">Phone / WhatsApp (so your collector can reach you)</label><PhoneField id="ph" value={f.phone||''} onChange={v=>setF(x=>({...x,phone:v}))}/>
    <label htmlFor="a">Pickup address</label><input id="a" value={f.addr} autoComplete="off" onChange={e=>setF({...f,addr:e.target.value,auto:false,lat:f.auto?null:f.lat,lng:f.auto?null:f.lng})} placeholder="Type street, area or landmark"/>
-   {sug.length>0&&<div className="card" style={{padding:6,margin:'6px 0 0'}} role="listbox" aria-label="Address suggestions">{sug.map(p=><button key={p.place_id} type="button" role="option" className="note" style={{width:'100%',background:'none',border:0,textAlign:'left',cursor:'pointer',color:'var(--ink)',alignItems:'flex-start'}} onClick={()=>pick(p)}><span>📍</span><span>{short(p.display_name)}</span></button>)}<div className="mute" style={{padding:'4px 8px',fontSize:12}}>Results © OpenStreetMap</div></div>}
+   {sug.length>0&&<div className="card" style={{padding:6,margin:'6px 0 0'}} role="listbox" aria-label="Address suggestions">{sug.map(p=><button key={p.place_id} type="button" role="option" className="note" style={{width:'100%',background:'none',border:0,textAlign:'left',cursor:'pointer',color:'var(--ink)',alignItems:'flex-start'}} onClick={()=>pick(p)}><span>📍</span><span>{short(p.display_name)}{p.d!=null&&<span className="mute" style={{display:'block'}}>{fmt(p.d)} from you</span>}</span></button>)}<div className="mute" style={{padding:'4px 8px',fontSize:12}}>Results © OpenStreetMap</div></div>}
    {sMsg&&<div className="mute" style={{marginTop:6}} role="status">{sMsg}</div>}
-   <div className="row" style={{marginTop:8,alignItems:'center'}}><button type="button" className="btn alt sm" onClick={gps}>📍 Use my GPS location</button><button type="button" className="btn alt sm" onClick={find}>🔍 Find address</button>{f.lat!=null&&<span className="mute">Pinned {f.lat.toFixed(5)}, {f.lng.toFixed(5)} <button className="link" onClick={()=>setF({...f,lat:null,lng:null})}>Clear</button></span>}</div>
+   <div className="row" style={{marginTop:8,alignItems:'center'}}><button type="button" className="btn alt sm" onClick={gps}>📍 Use my GPS location</button><button type="button" className="btn alt sm" onClick={find}>🔍 Find address</button><button type="button" className="btn alt sm" onClick={()=>setPin(true)}>🗺️ Pin on map</button>{f.lat!=null&&<span className="mute">Pinned {f.lat.toFixed(5)}, {f.lng.toFixed(5)} <button className="link" onClick={()=>setF({...f,lat:null,lng:null})}>Clear</button></span>}</div>
+   {pin&&<PinPicker lat={f.lat!=null?f.lat:(HOME?HOME.lat:-15.4167)} lng={f.lng!=null?f.lng:(HOME?HOME.lng:28.2833)} onCancel={()=>setPin(false)} onDone={async(la,ln)=>{setPin(false);const had=f.addr.trim()&&!f.addr.startsWith('GPS location')&&!f.addr.startsWith('Pinned location');setF(x=>({...x,lat:la,lng:ln,auto:true,addr:had?x.addr:'Pinned location '+la.toFixed(5)+', '+ln.toFixed(5)}));act.toast('Pin set.');if(!had){const a=await revGeo(la,ln);if(a)setF(x=>({...x,addr:a}))}}}/>}
    <label>Saved places</label><div className="chips">{places.map(p=><span key={p.id} style={{display:'inline-flex',alignItems:'center'}}><button type="button" className="chip" onClick={()=>{setF({...f,addr:p.addr,lat:p.lat,lng:p.lng});act.toast(p.label+' selected.')}}>{/shop/i.test(p.label)?'🏪':/home/i.test(p.label)?'🏠':'📌'} {p.label}</button><button type="button" className="x" style={{fontSize:16}} aria-label={'Remove '+p.label} onClick={()=>delPlace(p)}>×</button></span>)}<button type="button" className="chip" onClick={savePlace}>💾 Save this address</button></div>
    <label>Time slot</label><Chips val={f.slot} set={v=>{setF({...f,slot:v});setCd('');setCt('')}} opts={['Today 10:00–12:00','Today 14:00–16:00','Tomorrow 08:00–10:00','Tomorrow 12:00–14:00'].map(x=>[x,x])}/>
    <div className="mute" style={{margin:'4px 0'}}>Or choose your own date and time:</div>
