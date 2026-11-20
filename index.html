@@ -210,6 +210,13 @@ body.hasnav .sig{display:none}
 .pf span{background:var(--card);box-shadow:var(--sh);padding:8px 14px;font-size:13.5px}
 .pf span svg{color:var(--moss)}
 .auth>.brand{justify-content:center}
+
+.av.xs{width:28px;height:28px;border-radius:50%;font-size:11px}
+.person{display:inline-flex;align-items:center;gap:8px;background:none;border:0;padding:3px 0;color:inherit;font:inherit;cursor:pointer;text-align:left}
+.person span{text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:3px}
+.ov{position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.55);display:grid;place-items:center;padding:16px}
+.ov .card{width:min(360px,100%);margin:0;text-align:center}
+.pbig{width:132px;height:132px;border-radius:32px;object-fit:cover;margin:0 auto 12px;display:grid;place-items:center;background:linear-gradient(145deg,var(--moss),var(--deep));color:#fff;font:700 40px 'Sora',sans-serif}
 </style>
 
 
@@ -231,13 +238,19 @@ body.hasnav .sig{display:none}
 <script src="vendor/babel.min.js"></script>
 <script>window.Babel||document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"><\/script>')</script>
 <script type="text/babel">
-const {useState,useEffect,useRef}=React;
+const {useState,useEffect,useRef,useContext,createContext}=React;
+const PeopleCtx=createContext({people:{},open:()=>{}});
 // ===== Paste your keys here (Supabase: Project settings > API. OneSignal: Settings > Keys & IDs) =====
 const SUPABASE_URL='https://vxkhkrbsgbualgabacbj.supabase.co';
 const SUPABASE_KEY='sb_publishable_XLYKroCRtT-avUHH3-Qjjw__tRa3rCE';
 const OS_ID='YOUR_ONESIGNAL_APP_ID';
 const configured=!SUPABASE_URL.includes('YOUR_PROJECT_REF');
-const sb=configured?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
+const rememberOn=()=>{try{return localStorage.getItem('rt_remember')!=='0'}catch(e){return true}};
+const authStore={
+ getItem:k=>{try{return localStorage.getItem(k)||sessionStorage.getItem(k)}catch(e){return null}},
+ setItem:(k,v)=>{try{if(rememberOn()){localStorage.setItem(k,v);sessionStorage.removeItem(k)}else{sessionStorage.setItem(k,v);localStorage.removeItem(k)}}catch(e){}},
+ removeItem:k=>{try{localStorage.removeItem(k);sessionStorage.removeItem(k)}catch(e){}}};
+const sb=configured?supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{storage:authStore,persistSession:true,autoRefreshToken:true}}):null;
 let lastPos=0;
 window.OneSignalDeferred=window.OneSignalDeferred||[];
 if(configured&&!OS_ID.startsWith('YOUR_'))OneSignalDeferred.push(OS=>OS.init({appId:OS_ID}));
@@ -466,7 +479,7 @@ function PCard({r,mgr,open,children}){
   <span className="grow"><b>{r.type}</b>{mgr&&<span> · {r.client}</span>}<span className="mute" style={{display:'block'}}>{r.addr}</span></span>
   <span className={'pill '+r.status}>{LABEL[r.status]}</span><span className="chev">{o?'▲':'▼'}</span></button>
   <Stepper s={r.status}/>
-  {o&&<div className="pc-b"><div className="mute">🕒 {r.slot} · requested {ago(T(r))}</div>{r.notes&&<div>“{r.notes}”</div>}{r.worker&&<div className="mute">🚛 {r.worker}{r.kg?` · ${r.kg} kg collected`:''}</div>}<TrackMap r={r}/><Proof r={r}/><Nav r={r}/>{children}</div>}</div>}
+  {o&&<div className="pc-b"><div className="mute">🕒 {r.slot} · requested {ago(T(r))}</div>{r.notes&&<div>“{r.notes}”</div>}{r.worker&&<div className="mute" style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>🚛 <Person id={r.worker_id} name={r.worker} role="worker"/>{r.kg?<span>{' · '+r.kg+' kg collected'}</span>:null}</div>}<TrackMap r={r}/><Proof r={r}/><Nav r={r}/>{children}</div>}</div>}
 function Bars({data}){const m=Math.max(1,...data.map(d=>d.v));return <svg viewBox={'0 0 '+data.length*40+' 104'} width="100%" role="img" aria-label="Pickups requested in the last 7 days">{data.map((d,i)=>{const h=d.v/m*60;return <g key={i}><rect x={i*40+6} y={78-h} width="28" height={Math.max(h,3)} rx="7" fill="var(--moss)" opacity={d.v?1:.25}/><text x={i*40+20} y={73-h} textAnchor="middle" fontSize="11" fill="var(--ink)">{d.v?(d.v>=1000?(d.v/1000).toFixed(1)+'k':d.v):''}</text><text x={i*40+20} y="98" textAnchor="middle" fontSize="11" fill="var(--mute)">{d.l}</text></g>})}</svg>}
 
 /* ===== v2 interface: shared pieces ===== */
@@ -515,6 +528,16 @@ function Rate({r,act}){
  return <div className="rate" role="group" aria-label={'Rate '+r.worker}>
   <span className="mute" style={{marginRight:6}}>{v?'You rated '+r.worker:'Rate '+r.worker}</span>
   {[1,2,3,4,5].map(n=><button key={n} className={n<=v?'on':''} disabled={!!v} aria-label={n+' star'+(n>1?'s':'')} onClick={()=>{setV(n);act.rate(r,n)}}>★</button>)}</div>}
+function Person({id,name,role}){
+ const {people,open}=useContext(PeopleCtx);const p=people[id]||{};
+ if(!name)return null;
+ return <button type="button" className="person" onClick={()=>open({id,name:p.name||name,role:p.role||role,avatar_url:p.avatar_url||null,jobs:p.jobs})} aria-label={'View profile of '+name}><Av u={{name:p.name||name,avatar_url:p.avatar_url}} cls="xs"/><span>{name}</span></button>}
+function PersonSheet({p,onClose}){
+ return <div className="ov" role="dialog" aria-modal="true" aria-label={p.name+' profile'} onClick={onClose}><div className="card" onClick={e=>e.stopPropagation()}>
+  {p.avatar_url?<img className="pbig" src={p.avatar_url} alt={p.name+' profile picture'}/>:<div className="pbig">{ini(p.name)}</div>}
+  <h2 style={{marginBottom:2}}>{p.name}</h2><div className="mute">{p.role==='worker'?'🚛 Collector':p.role==='manager'?'Manager':'🏠 Client'}</div>
+  {p.jobs!=null&&<div className="chip2" style={{display:'inline-block',marginTop:10}}>{p.jobs} pickup{p.jobs===1?'':'s'} with you</div>}
+  <button className="btn full" style={{marginTop:16}} onClick={onClose}>Close</button></div></div>}
 function Profile({user,ui}){
  const [t,setT]=useTheme(),ins=useInstall(),[up,setUp]=useState(false);
  const url=location.href.split('#')[0];
@@ -632,14 +655,14 @@ const [here,setHere]=useState(null),[near,setNear]=useState(false);
    <div className="card" style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,marginBottom:10}}><div><b>{avail?'🟢 Available for pickups':'⚪ Offline'}</b><div className="mute">{avail?'Sharing your location so nearby jobs reach you. Keep the app open.':'Go available to receive nearby pickups.'}</div></div><button className={'btn sm '+(avail?'alt':'')} onClick={toggleAvail}>{avail?'Go offline':'Go available'}</button></div>
    {gpsBad&&<div className="card" style={{marginBottom:10}}><b>📍 My area{manLoc?': '+manLoc.name:''}</b><div className="mute">GPS is not available on this connection. Enter where you are so the nearest jobs reach you, and update it when you move.</div><div className="row" style={{gap:8,marginTop:8}}><input value={locQ} onChange={e=>setLocQ(e.target.value)} placeholder="Area, street or landmark"/><button className="btn sm" onClick={saveManual}>Set</button></div></div>}
    {PENDING.size>0&&<div className="alertb" role="alert">🔔 New pickup nearby. Accept it below to stop the alarm.</div>}
-   {offers.map(r=><div className="card trip" key={'o'+r.id}><div className="row" style={{alignItems:'center'}}><div style={{display:'flex',gap:12,alignItems:'center'}}><span className="ico">{ICON[r.type]||'🗑️'}</span><div><b style={{fontSize:16}}>New pickup offer</b><div className="mute">{r.type} · {r.client}</div></div></div><span className="pill assigned">Offered</span></div>
+   {offers.map(r=><div className="card trip" key={'o'+r.id}><div className="row" style={{alignItems:'center'}}><div style={{display:'flex',gap:12,alignItems:'center'}}><span className="ico">{ICON[r.type]||'🗑️'}</span><div><b style={{fontSize:16}}>New pickup offer</b><div className="mute">{r.type}</div><Person id={r.uid} name={r.client} role="client"/></div></div><span className="pill assigned">Offered</span></div>
     <div style={{marginTop:12,display:'grid',gap:4}}><div style={{display:'flex',gap:8}}><Ic n="pin" s={18}/><span>{r.addr}</span></div><div className="mute" style={{display:'flex',gap:8,alignItems:'center'}}><Ic n="clock" s={18}/>{r.slot}</div></div>
     {here&&r.lat!=null&&<div style={{marginTop:8}}><span className="chip2">{fmt(dist(here.lat,here.lng,r.lat,r.lng))} away</span></div>}
     <div style={{display:'flex',gap:8,marginTop:12}}><button className="btn warn full" onClick={()=>act.claim(r.id)}>Accept pickup</button><button className="btn alt full" onClick={()=>act.skip(r.id)}>Skip</button></div></div>)}
    {mine.length>1&&<div className="row" style={{marginBottom:10,alignItems:'center'}}><span className="mute">Order of jobs</span><button className={'btn alt sm'+(near?' on':'')} onClick={locate}>Nearest first</button></div>}
    {mine.length===0&&offers.length===0&&<div className="card empty"><div style={{fontSize:34}}>🚛</div><b style={{color:'var(--ink)'}}>No jobs assigned yet</b><div style={{marginTop:4}}>New assignments ring and vibrate this phone.</div></div>}
    <div className="list2">{mp.items.map(r=>{const d=dd(r);return <div className={'card'+(r.status==='enroute'?' trip':'')} key={r.id}>
-    <div className="row" style={{alignItems:'center'}}><div style={{display:'flex',gap:12,alignItems:'center'}}><span className="ico">{ICON[r.type]||'🗑️'}</span><div><b style={{fontSize:16}}>{r.type}</b><div className="mute">{r.client}</div></div></div><span className={'pill '+r.status}>{LABEL[r.status]}</span></div>
+    <div className="row" style={{alignItems:'center'}}><div style={{display:'flex',gap:12,alignItems:'center'}}><span className="ico">{ICON[r.type]||'🗑️'}</span><div><b style={{fontSize:16}}>{r.type}</b><div className="mute"><Person id={r.uid} name={r.client} role="client"/></div></div></div><span className={'pill '+r.status}>{LABEL[r.status]}</span></div>
     <div style={{marginTop:12,display:'grid',gap:4}}><div style={{display:'flex',gap:8}}><Ic n="pin" s={18}/><span>{r.addr}</span></div><div className="mute" style={{display:'flex',gap:8,alignItems:'center'}}><Ic n="clock" s={18}/>{r.slot}</div></div>
     {r.notes&&<div className="codebox">“{r.notes}”</div>}
     {d!=null&&<div style={{marginTop:8}}><span className="chip2">{fmt(d)} away</span></div>}
@@ -859,29 +882,34 @@ const toNote=x=>({id:x.id,text:x.text,read:x.is_read,time:new Date(x.created).to
 
 function Auth({msg,setMsg}){
  const [mode,setMode]=useState('login');
- const [f,setF]=useState({name:'',email:'',pw:'',pw2:'',role:'client'});const [pic,setPic]=useState(null);
+ const [f,setF]=useState(()=>{let e='';try{e=localStorage.getItem('rt_last_email')||''}catch(x){}return {name:'',email:e,pw:'',pw2:'',role:'client'}});const [pic,setPic]=useState(null);
+ const [rem,setRem]=useState(rememberOn());
  const set=k=>e=>setF({...f,[k]:e.target.value});
  const em=f.email.trim().toLowerCase();
  const go=m=>{setMode(m);setMsg('');setF({...f,pw:'',pw2:''})};
- const login=async()=>{const {error}=await sb.auth.signInWithPassword({email:em,password:f.pw});if(error)setMsg(errTxt(error))};
+ const login=async()=>{if(!em||!f.pw)return setMsg('Enter your email and password.');
+  try{localStorage.setItem('rt_remember',rem?'1':'0');if(rem)localStorage.setItem('rt_last_email',em);else localStorage.removeItem('rt_last_email')}catch(e){}
+  const {error}=await sb.auth.signInWithPassword({email:em,password:f.pw});if(error)setMsg(errTxt(error))};
  const register=async()=>{
   if(!f.name.trim())return setMsg('Enter your full name.');
   if(f.pw.length<6)return setMsg('Password must be at least 6 characters.');
   if(f.pw!==f.pw2)return setMsg('Passwords do not match.');
+  try{localStorage.setItem('rt_remember','1');localStorage.setItem('rt_last_email',em)}catch(e){}
   const {data,error}=await sb.auth.signUp({email:em,password:f.pw,options:{data:{name:f.name.trim(),requested_role:f.role==='worker'?'worker':'client'}}});
   if(!error&&pic)window.PENDING_AVATAR=pic;
   if(error)return setMsg(errTxt(error));
   if(!data.session){go('login');setMsg('Account created. Check your email to confirm, then log in.')}};
  const forgot=async()=>{if(!em)return setMsg('Enter your account email.');const {error}=await sb.auth.resetPasswordForEmail(em,{redirectTo:location.href.split('#')[0]});setMsg(error?errTxt(error):'Reset link sent. Check your inbox and spam folder.')};
- const field=(id,label,k,type='text',ph='')=><div><label htmlFor={id}>{label}</label><input id={id} type={type} value={f[k]} onChange={set(k)} placeholder={ph} autoComplete={type==='password'?'current-password':type==='email'?'email':'off'}/></div>;
+ const field=(id,label,k,type='text',ph='')=><div><label htmlFor={id}>{label}</label><input id={id} name={type==='password'?(mode==='login'?'password':'new-password'):type==='email'?'username':k} type={type} value={f[k]} onChange={set(k)} placeholder={ph} autoComplete={type==='password'?(mode==='login'?'current-password':'new-password'):type==='email'?'username':k==='name'?'name':'off'}/></div>;
  return <div className="wrap"><div className="auth">
   <div className="brand" style={{margin:'32px 0 18px'}}>{LOGO}{BRAND}</div>
   <div style={{textAlign:'center',marginBottom:20}}><img src="data:image/png;base64,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" alt="Put litter in the bin" width="96" height="96" style={{display:'block',margin:'0 auto 12px',borderRadius:'50%'}}/><h1 style={{fontSize:28}}>Welcome to Smart Garbage Collection</h1></div>
   <div className="pitch"><h1>Cleaner streets, one pickup at a time.</h1><div className="pf"><span><Ic n="pin" s={16}/>Live tracking with ETA</span><span><Ic n="clock" s={16}/>Choose your time slot</span><span><Ic n="check" s={16}/>Photo proof of every pickup</span></div></div>
   <div className="card"><h2>{{login:'Log in',register:'Create account',forgot:'Reset password'}[mode]}</h2>
-   {mode==='login'&&<div>{field('e','Email','email','email','you@example.com')}{field('p','Password','pw','password')}
-    <button className="btn full" onClick={login}>Log in</button>
-    <div className="row" style={{marginTop:8}}><button className="link" onClick={()=>go('forgot')}>Forgot password?</button><button className="link" onClick={()=>go('register')}>Create account</button></div></div>}
+   {mode==='login'&&<form onSubmit={e=>{e.preventDefault();login()}}>{field('e','Email','email','email','you@example.com')}{field('p','Password','pw','password')}
+    <label style={{display:'flex',alignItems:'center',gap:8,margin:'10px 0',cursor:'pointer'}}><input type="checkbox" checked={rem} onChange={e=>setRem(e.target.checked)} style={{width:'auto',margin:0}}/>Remember me on this device</label>
+    <button className="btn full" type="submit">Log in</button>
+    <div className="row" style={{marginTop:8}}><button type="button" className="link" onClick={()=>go('forgot')}>Forgot password?</button><button type="button" className="link" onClick={()=>go('register')}>Create account</button></div></form>}
    {mode==='register'&&<div><div><label>I am registering as</label><Chips val={f.role} set={v=>setF({...f,role:v})} opts={[['client','Client'],['worker','Collector']]}/><div className="mute" style={{marginTop:4}}>{f.role==='worker'?'Collect garbage and earn per pickup.':'Request garbage pickups.'}</div></div>{field('n','Full name','name')}{field('e','Email','email','email')}{field('p','Password','pw','password','At least 6 characters')}{field('p2','Confirm password','pw2','password')}
     <div><label htmlFor="rpic">Profile picture (optional)</label><div style={{display:'flex',gap:10,alignItems:'center'}}>{pic&&<Thumb file={pic}/>}<input id="rpic" type="file" accept="image/*" onChange={e=>setPic(e.target.files[0]||null)}/></div></div>
     <button className="btn full" onClick={register}>Create account</button>
@@ -918,6 +946,12 @@ function App(){
  const [msg,setMsg]=useState('');
  const [pushOn,setPushOn]=useState(false);
  const [theme,setTheme]=useTheme(),online=useOnline();
+ const [people,setPeople]=useState({});const [sheet,setSheet]=useState(null);
+ const link=reqs.map(r=>r.id+':'+(r.worker_id||'')).join(',');
+ useEffect(()=>{if(!configured||!user)return;
+  if(user.role==='manager'){const m={};users.forEach(u=>{m[u.id]=u});setPeople(m);return}
+  let live=true;sb.rpc('my_people').then(({data})=>{if(!live||!data)return;const m={};data.forEach(x=>{m[x.id]=x});setPeople(m)},()=>{});
+  return()=>{live=false}},[user&&user.id,user&&user.role,users,link]);
  const st={reqs,notes,pays};
  const merge=row=>setReqs(p=>[toReq(row),...p.filter(x=>x.id!==row.id)].sort((a,b)=>b.created-a.created));
  const uid=session&&session.user.id;
@@ -1038,7 +1072,7 @@ function App(){
    setUser(u=>({...u,avatar_url:url}));setUsers(p=>p.map(x=>x.id===user.id?{...x,avatar_url:url}:x));setMsg(file?'Profile picture updated.':'Profile picture removed.')}
   catch(e){setMsg('Could not update the picture. Run avatars.sql in Supabase once.')}};
  const ui={pushOn,enablePush,logout,setAvatar};
- return <div className="wrap">
+ return <PeopleCtx.Provider value={{people,open:setSheet}}><div className="wrap">
   {!online&&<div className="offline" role="alert">You are offline. Reconnect to send updates.</div>}
   <header><div className="brand">{LOGO}{BRAND}</div>
    <div className="hr"><button className="ibtn" aria-label="Switch light or dark theme" onClick={()=>setTheme(dark?'light':'dark')}><Ic n={dark?'sun':'moon'} s={18}/></button>
@@ -1049,7 +1083,8 @@ function App(){
   {user.role==='worker'&&<Worker st={st} act={act} user={user} ui={ui}/>}
   {user.role==='manager'&&<Manager st={st} act={act} users={users} me={user.id}/>}
   {msg&&<div className="toast" role="status">{msg}</div>}
- </div>
+  {sheet&&<PersonSheet p={sheet} onClose={()=>setSheet(null)}/>}
+ </div></PeopleCtx.Provider>
 }
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
 </script>
