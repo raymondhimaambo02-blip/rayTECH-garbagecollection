@@ -568,9 +568,9 @@ function Client({st,act,user,ui}){
  const [f,setF]=useState({client:user.name,addr:'',type:TYPES[0],notes:'',lat:null,lng:null});
  const [q,setQ]=useState(''),[fl,setFl]=useState('all');
  const set=k=>e=>setF({...f,[k]:e.target.value});
- const mine=st.reqs.filter(r=>r.uid===user.id);
+ const mineAll=st.reqs.filter(r=>r.uid===user.id),mine=mineAll.filter(r=>!isHid(r,user.id));
  const act1=mine.filter(r=>r.status!=='collected'),dn=mine.filter(r=>r.status==='collected');
- const kg=dn.reduce((a,r)=>a+Number(r.kg||0),0),lv=levelOf(kg);
+ const kg=mineAll.filter(r=>r.status==='collected').reduce((a,r)=>a+Number(r.kg||0),0),lv=levelOf(kg);
  const onway=mine.find(r=>r.status==='enroute'),next=onway||act1[act1.length-1];
  const recent=[...new Map(mine.filter(r=>!/^GPS location/.test(r.addr)).map(r=>[r.addr,r])).values()].slice(0,3);
  const list=mine.filter(r=>(fl==='all'||(fl==='active'?r.status!=='collected':r.status==='collected'))&&has(r.addr+' '+r.type+' '+(r.worker||''),q));
@@ -620,9 +620,10 @@ function Client({st,act,user,ui}){
   {tab==='mine'&&<div>
    <Search v={q} set={v=>{setQ(v);pg.reset()}} ph="Search address, type or collector"/>
    <Chips val={fl} set={v=>{setFl(v);pg.reset()}} opts={[['all','All',mine.length],['active','Active',act1.length],['done','Completed',dn.length]]}/>
+   {fl==='done'&&dn.length>0&&<div style={{margin:'0 0 12px'}}><button className="btn alt sm" style={{color:'var(--red)'}} onClick={()=>act.hide(dn.map(r=>r.id))}>🗑 Delete all completed ({dn.length})</button></div>}
    {list.length===0&&<div className="card empty">{mine.length?'No pickups match your search.':'No pickups yet. Tap New pickup to get started.'}</div>}
    <div className="list2">{pg.items.map(r=><PCard key={r.id} r={r} open={r.status==='collected'&&!st.pays.some(p=>p.request_id===String(r.id)&&p.status!=='rejected')}><PayBox r={r} st={st} act={act}/><Rate r={r} act={act}/>
-     <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:12}}>{r.status==='collected'&&<button className="btn alt sm" onClick={()=>again(r)}>🔁 Request again</button>}{r.status!=='collected'&&<button className="btn alt sm" style={{color:'var(--red)'}} onClick={()=>act.cancel(r)}>✖ Cancel pickup</button>}<a className="btn alt sm" style={{textDecoration:'none',display:'inline-flex',gap:6,alignItems:'center'}} href={waLink(r)} target="_blank" rel="noopener"><Ic n="share" s={15}/>Share</a></div></PCard>)}</div>
+     <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:12}}>{r.status==='collected'&&<button className="btn alt sm" onClick={()=>again(r)}>🔁 Request again</button>}{r.status==='collected'&&<button className="btn alt sm" style={{color:'var(--red)'}} onClick={()=>act.hide([r.id])}>🗑 Delete</button>}{r.status!=='collected'&&<button className="btn alt sm" style={{color:'var(--red)'}} onClick={()=>act.cancel(r)}>✖ Cancel pickup</button>}<a className="btn alt sm" style={{textDecoration:'none',display:'inline-flex',gap:6,alignItems:'center'}} href={waLink(r)} target="_blank" rel="noopener"><Ic n="share" s={15}/>Share</a></div></PCard>)}</div>
    {pg.pager}</div>}
   {tab==='me'&&<Profile user={user} ui={ui}/>}
   </div>
@@ -633,7 +634,7 @@ function Client({st,act,user,ui}){
 function Worker({st,act,user,ui}){
  const who=user.name,[tab,setTab]=useState('jobs');
  const mine=st.reqs.filter(r=>r.worker===who&&r.status!=='collected');
- const done=st.reqs.filter(r=>r.worker===who&&r.status==='collected');
+ const doneAll=st.reqs.filter(r=>r.worker===who&&r.status==='collected'),done=doneAll.filter(r=>!isHid(r,user.id));
 const [here,setHere]=useState(null),[near,setNear]=useState(false);
  const [avail,setAvail]=useState(!!user.available);
  const offers=st.reqs.filter(r=>r.status==='requested'&&(r.offered_to||[]).includes(user.id));
@@ -651,14 +652,14 @@ const [here,setHere]=useState(null),[near,setNear]=useState(false);
  const dd=r=>here&&r.lat!=null?dist(here.lat,here.lng,r.lat,r.lng):null;
  const jobs=[...mine].sort((a,b)=>{const ea=a.status==='enroute',eb=b.status==='enroute';if(ea!==eb)return ea?-1:1;if(near){const x=dd(a),y=dd(b);return (x==null?1e12:x)-(y==null?1e12:y)}return 0});
  const mp=usePaged(jobs,4,'jobs'),dp=usePaged(done,6,'completed');
- const totalKg=done.reduce((a,r)=>a+Number(r.kg||0),0);
+ const totalKg=doneAll.reduce((a,r)=>a+Number(r.kg||0),0);
  const locate=()=>{if(near)return setNear(false);if(!navigator.geolocation)return act.toast('GPS is not available on this device.');act.toast('Finding your location…');
   navigator.geolocation.getCurrentPosition(p=>{setHere({lat:p.coords.latitude,lng:p.coords.longitude});setNear(true)},()=>act.toast('Allow location access to sort by distance.'),{enableHighAccuracy:true,timeout:12000})};
  return <>
   <div className="fade" key={tab}>
   {tab==='jobs'&&<div>
    <div className="hero2"><div className="hi">{greet()}, {(who||'').split(' ')[0]}</div><div className="sub">{mine.length?mine.length+' job'+(mine.length>1?'s':'')+' to collect':'No jobs right now'}</div>
-    <div className="hs">{[['To collect',mine.length],['Completed',done.length],['Kg collected',totalKg]].map(([l,v])=><div key={l}><b>{v}</b><span>{l}</span></div>)}</div></div>
+    <div className="hs">{[['To collect',mine.length],['Completed',doneAll.length],['Kg collected',totalKg]].map(([l,v])=><div key={l}><b>{v}</b><span>{l}</span></div>)}</div></div>
    <div className="card" style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,marginBottom:10}}><div><b>{avail?'🟢 Available for pickups':'⚪ Offline'}</b><div className="mute">{avail?'Sharing your location so nearby jobs reach you. Keep the app open.':'Go available to receive nearby pickups.'}</div></div><button className={'btn sm '+(avail?'alt':'')} onClick={toggleAvail}>{avail?'Go offline':'Go available'}</button></div>
    {gpsBad&&<div className="card" style={{marginBottom:10}}><b>📍 My area{manLoc?': '+manLoc.name:''}</b><div className="mute">GPS is not available on this connection. Enter where you are so the nearest jobs reach you, and update it when you move.</div><div className="row" style={{gap:8,marginTop:8}}><input value={locQ} onChange={e=>setLocQ(e.target.value)} placeholder="Area, street or landmark"/><button className="btn sm" onClick={saveManual}>Set</button></div></div>}
    {PENDING.size>0&&<div className="alertb" role="alert">🔔 New pickup nearby. Accept it below to stop the alarm.</div>}
@@ -689,9 +690,10 @@ const [here,setHere]=useState(null),[near,setNear]=useState(false);
    {mp.pager}
   </div>}
   {tab==='done'&&<div>
-   <div className="grid two"><div className="card stat"><b>{done.length}</b><span className="mute">Pickups completed</span></div><div className="card stat"><b>{totalKg} kg</b><span className="mute">Total collected</span></div></div>
+   <div className="grid two"><div className="card stat"><b>{doneAll.length}</b><span className="mute">Pickups completed</span></div><div className="card stat"><b>{totalKg} kg</b><span className="mute">Total collected</span></div></div>
+   {done.length>0&&<div style={{margin:'0 0 12px'}}><button className="btn alt sm" style={{color:'var(--red)'}} onClick={()=>act.hide(done.map(r=>r.id))}>🗑 Delete all completed ({done.length})</button></div>}
    {done.length===0&&<div className="card empty">Completed pickups will appear here.</div>}
-   <div className="list2">{dp.items.map(r=><div className="card" key={r.id}><div className="row" style={{alignItems:'center'}}><div style={{display:'flex',gap:12,alignItems:'center'}}>{r.proofUrl?<img className="thumb" src={r.proofUrl} alt="Photo proof"/>:<span className="ico">{ICON[r.type]||'🗑️'}</span>}<div><b>{r.addr}</b><div className="mute">{r.client} · {r.type}</div></div></div><span className="pill collected">{r.kg} kg</span></div></div>)}</div>
+   <div className="list2">{dp.items.map(r=><div className="card" key={r.id}><div className="row" style={{alignItems:'center'}}><div style={{display:'flex',gap:12,alignItems:'center'}}>{r.proofUrl?<img className="thumb" src={r.proofUrl} alt="Photo proof"/>:<span className="ico">{ICON[r.type]||'🗑️'}</span>}<div><b>{r.addr}</b><div className="mute">{r.client} · {r.type}</div></div></div><div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}><span className="pill collected">{r.kg} kg</span><button className="btn alt sm" style={{color:'var(--red)'}} onClick={()=>act.hide([r.id])} aria-label={'Delete pickup at '+r.addr}>🗑 Delete</button></div></div></div>)}</div>
    {dp.pager}</div>}
   {tab==='me'&&<Profile user={user} ui={ui}/>}
   </div>
@@ -761,6 +763,7 @@ function ClientRow({u,reqs}){
   {o&&<div className="pc-b">{reqs.length===0&&<div className="mute">No pickups yet.</div>}{reqs.map(r=><div className="note" key={r.id}><span>{ICON[r.type]||'🗑️'}</span><div style={{flex:1}}><b>{r.type}</b><div className="mute">{r.addr} · {ago(T(r))}</div></div><span className={'pill '+r.status}>{SHORT[r.status]}</span></div>)}</div>}</div>}
 
 const fK=v=>'K'+Number(v||0).toLocaleString();
+const isHid=(r,id)=>(r.hidden_by||[]).includes(id);
 function PayBox({r,st,act}){
  const ps=st.pays.filter(p=>p.request_id===String(r.id));
  const sm=s=>ps.filter(p=>p.status===s).reduce((a,p)=>a+p.amount,0);
@@ -1039,6 +1042,13 @@ function App(){
    gone.forEach(stopAlarm);setReqs(p=>p.filter(x=>!gone.includes(x.id)));
    sb.storage.from('proofs').remove(gone.map(i=>i+'.jpg')).then(()=>{});
    setMsg(gone.length===1?'Pickup deleted.':gone.length+' pickups deleted.')},
+  hide:async ids=>{ids=[].concat(ids).map(String);if(!ids.length)return;
+   if(!confirm('Delete '+(ids.length===1?'this completed pickup':ids.length+' completed pickups')+' from your list?\n\nOther people\'s records and payment records are kept. Your totals stay the same.'))return;
+   const {data,error}=await sb.rpc('hide_jobs',{p_ids:ids});
+   if(error)return setMsg('Could not delete. Run hide-jobs.sql in Supabase once, then try again.');
+   if(!data)return setMsg('Nothing was deleted. Only completed pickups can be deleted.');
+   setReqs(p=>p.map(x=>ids.includes(String(x.id))&&x.status==='collected'?{...x,hidden_by:[...(x.hidden_by||[]),user.id]}:x));
+   setMsg(data===1?'Pickup deleted.':data+' pickups deleted.')},
   cancel:async r=>{if(!confirm('Cancel this pickup at '+r.addr+'?'+(r.status==='enroute'?'\n\nThe collector is already on the way.':'')))return;
    const {data,error}=await sb.from('requests').delete().eq('id',r.id).select('id');
    if(error||!data||!data.length)return setMsg('Could not cancel. Run cancel-pickup.sql in Supabase once, then try again.');
