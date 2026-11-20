@@ -240,28 +240,26 @@ const PUSH=!OS_ID.startsWith('YOUR_');
 let AUDIO_CTX=null,ALARM_T=null,WAKE=null;const PENDING=new Set();
 const unlockAudio=()=>{try{AUDIO_CTX=AUDIO_CTX||new (window.AudioContext||window.webkitAudioContext)();if(AUDIO_CTX.state==='suspended')AUDIO_CTX.resume()}catch(e){}};
 ['pointerdown','keydown','touchstart'].forEach(ev=>window.addEventListener(ev,unlockAudio,{passive:true}));
-const ringOnce=()=>{
- try{if(navigator.vibrate)navigator.vibrate([500,200,500,200,500])}catch(e){}
+const bell=(f,t,d,vol)=>{ /* soft bell: pure tone + two gentle overtones, quick attack, long smooth fade */
+ [[1,vol],[2.01,vol*0.28],[3.97,vol*0.09]].forEach(([m,v])=>{const o=AUDIO_CTX.createOscillator(),g=AUDIO_CTX.createGain();
+  o.type='sine';o.frequency.value=f*m;o.connect(g);g.connect(AUDIO_CTX.destination);
+  g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(v,t+0.015);g.gain.exponentialRampToValueAtTime(0.0001,t+d);
+  o.start(t);o.stop(t+d+0.05)})};
+const ringOnce=()=>{ /* "Sunrise chime": rising C-major arpeggio, then a bright resolve */
+ try{if(navigator.vibrate)navigator.vibrate([400,150,400,150,400])}catch(e){}
  try{unlockAudio();if(!AUDIO_CTX)return;const t=AUDIO_CTX.currentTime;
-  [[880,0],[1175,0.3],[880,0.6],[1175,0.9]].forEach(([f,d])=>{const o=AUDIO_CTX.createOscillator(),g=AUDIO_CTX.createGain();
-   o.type='square';o.frequency.value=f;o.connect(g);g.connect(AUDIO_CTX.destination);
-   g.gain.setValueAtTime(0.0001,t+d);g.gain.exponentialRampToValueAtTime(0.5,t+d+0.02);g.gain.exponentialRampToValueAtTime(0.0001,t+d+0.27);
-   o.start(t+d);o.stop(t+d+0.28)})}catch(e){}};
+  [[523.25,0],[659.25,0.18],[783.99,0.36],[1046.5,0.54],[783.99,0.9],[1046.5,1.08],[1318.5,1.26]].forEach(([f,d],i)=>bell(f,t+d,i>=5?1.1:0.7,i>=5?0.34:0.28))}catch(e){}};
 const getAccepted=()=>{try{return JSON.parse(localStorage.getItem('accepted_jobs')||'[]')}catch(e){return[]}};
 const markAccepted=id=>{try{localStorage.setItem('accepted_jobs',JSON.stringify([...new Set([...getAccepted(),id])].slice(-200)))}catch(e){}};
-const startAlarm=async id=>{PENDING.add(id);try{speak('New pickup assigned. Please accept the job.')}catch(e){}
+const startAlarm=async id=>{PENDING.add(id);try{speak('New pickup nearby. Please accept the job.')}catch(e){}
  if(!ALARM_T){ringOnce();ALARM_T=setInterval(ringOnce,2500)}
  try{if('wakeLock' in navigator&&!WAKE)WAKE=await navigator.wakeLock.request('screen')}catch(e){}};
 const stopAlarm=id=>{PENDING.delete(id);
  if(PENDING.size===0){clearInterval(ALARM_T);ALARM_T=null;try{navigator.vibrate&&navigator.vibrate(0)}catch(e){}
   try{WAKE&&WAKE.release();WAKE=null}catch(e){}}};
 const MYNOTES=new Set();
-const chimeOnce=()=>{try{navigator.vibrate&&navigator.vibrate([300,150,300])}catch(e){}
- try{unlockAudio();if(!AUDIO_CTX)return;const t=AUDIO_CTX.currentTime;
-  [[988,0],[1318,0.22]].forEach(([f,d])=>{const o=AUDIO_CTX.createOscillator(),g=AUDIO_CTX.createGain();
-   o.type='sine';o.frequency.value=f;o.connect(g);g.connect(AUDIO_CTX.destination);
-   g.gain.setValueAtTime(0.0001,t+d);g.gain.exponentialRampToValueAtTime(0.5,t+d+0.02);g.gain.exponentialRampToValueAtTime(0.0001,t+d+0.3);
-   o.start(t+d);o.stop(t+d+0.32)})}catch(e){}};
+const chimeOnce=()=>{try{navigator.vibrate&&navigator.vibrate([200,100,200])}catch(e){}
+ try{unlockAudio();if(!AUDIO_CTX)return;const t=AUDIO_CTX.currentTime;bell(783.99,t,0.6,0.28);bell(1046.5,t+0.2,0.9,0.28)}catch(e){}};
 const stopAllAlarms=()=>{PENDING.clear();stopAlarm(-1)};
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&PENDING.size&&'wakeLock' in navigator&&!WAKE)navigator.wakeLock.request('screen').then(w=>WAKE=w).catch(()=>{})});
 const STEPS=['requested','assigned','enroute','collected'];
@@ -281,9 +279,10 @@ const mapUrl=r=>r.lat!=null?`https://www.google.com/maps/dir/?api=1&destination=
 function Nav({r}){return <a className="btn alt sm" style={{display:'inline-block',marginTop:12,textDecoration:'none'}} href={mapUrl(r)} target="_blank" rel="noopener">Navigate in Maps</a>}
 
 /* ===== In-app voice turn-by-turn (works in any mobile browser, no Maps app needed) ===== */
-const speak=t=>{try{if(!('speechSynthesis' in window))return false;const sy=window.speechSynthesis;sy.cancel();const u=new SpeechSynthesisUtterance(t);u.lang='en-GB';u.rate=1;u.volume=1;
+const HAS_TTS=()=>!!(window.AndroidTTS&&window.AndroidTTS.speak)||('speechSynthesis' in window&&typeof SpeechSynthesisUtterance!=='undefined');
+const speak=t=>{try{if(window.AndroidTTS&&window.AndroidTTS.speak){window.AndroidTTS.speak(String(t));return true}if(!('speechSynthesis' in window)||typeof SpeechSynthesisUtterance==='undefined')return false;const sy=window.speechSynthesis;sy.cancel();const u=new SpeechSynthesisUtterance(t);u.lang='en-GB';u.rate=1;u.volume=1;
  u.onerror=e=>{if(e&&e.error==='not-allowed')window.addEventListener('pointerdown',()=>speak(t),{once:true})};sy.speak(u);return true}catch(e){return false}};
-const unlockSpeech=()=>{try{if('speechSynthesis' in window){const u=new SpeechSynthesisUtterance(' ');u.volume=0;window.speechSynthesis.speak(u)}}catch(e){}};
+const unlockSpeech=()=>{try{if('speechSynthesis' in window&&typeof SpeechSynthesisUtterance!=='undefined'){const u=new SpeechSynthesisUtterance(' ');u.volume=0;window.speechSynthesis.speak(u)}}catch(e){}};
 ['pointerdown','touchend','keydown'].forEach(ev=>window.addEventListener(ev,unlockSpeech,{passive:true,once:true}));
 const mDist=m=>m>=1000?(m/1000).toFixed(1)+' kilometres':(Math.max(10,Math.round(m/10)*10))+' metres';
 const MOD={'left':'left','slight left':'slightly left','sharp left':'sharp left','right':'right','slight right':'slightly right','sharp right':'sharp right','straight':'straight ahead','uturn':'around'};
@@ -320,8 +319,8 @@ function VoiceNav({r,pos}){
   const d=S.current.dest;S.current={route:null,i:0,said:{},dest:d,busy:false,lastFetch:0,last:'',wl:S.current.wl};
   try{if('wakeLock' in navigator)navigator.wakeLock.request('screen').then(w=>{S.current.wl=w}).catch(()=>{})}catch(e){}
   setOn(true)};
- const stop=()=>{setOn(false);setNxt('');setMsg('');try{window.speechSynthesis&&window.speechSynthesis.cancel()}catch(e){}try{S.current.wl&&S.current.wl.release()}catch(e){}};
- useEffect(()=>{if(!('speechSynthesis' in window))setMsg('Voice is not supported in this browser. Showing written directions only.');if(on){try{if('wakeLock' in navigator)navigator.wakeLock.request('screen').then(w=>{S.current.wl=w}).catch(()=>{})}catch(e){}}},[]);
+ const stop=()=>{setOn(false);setNxt('');setMsg('');try{window.AndroidTTS&&window.AndroidTTS.stop&&window.AndroidTTS.stop()}catch(e){}try{window.speechSynthesis&&window.speechSynthesis.cancel()}catch(e){}try{S.current.wl&&S.current.wl.release()}catch(e){}};
+ useEffect(()=>{if(!HAS_TTS())setMsg('Voice is not supported in this browser. Showing written directions only.');if(on){try{if('wakeLock' in navigator)navigator.wakeLock.request('screen').then(w=>{S.current.wl=w}).catch(()=>{})}catch(e){}}},[]);
  useEffect(()=>()=>{try{window.speechSynthesis&&window.speechSynthesis.cancel()}catch(e){}try{S.current.wl&&S.current.wl.release()}catch(e){}},[]);
  useEffect(()=>{
   if(!on||!pos)return;const s=S.current;
@@ -358,7 +357,7 @@ function VoiceNav({r,pos}){
   {!on?<button className="btn alt sm" onClick={start}>🔊 Start voice directions</button>
    :<div><div style={{background:'var(--soft)',borderRadius:10,padding:'10px 12px',fontWeight:600}}>{nxt||'Getting your route…'}</div>
     <div style={{display:'flex',gap:8,marginTop:8}}><button className="btn alt sm" onClick={()=>S.current.last&&speak(S.current.last)}>🔁 Repeat</button><button className="btn alt sm" onClick={stop}>🔇 Stop voice</button></div></div>}
-  {msg&&<div className="mute" style={{marginTop:6,color:'var(--red)'}}>{msg}</div>}
+  {msg&&<div className="mute" style={{marginTop:6,color:'var(--red)'}}>{msg}{msg.startsWith('Voice is not')&&<div style={{marginTop:6}}><a className="btn alt sm" style={{display:'inline-block',textDecoration:'none'}} href={'intent://'+location.host+location.pathname+'#Intent;scheme=https;package=com.android.chrome;end'}>Open in Chrome for voice</a></div>}</div>}
  </div>
 }
 
@@ -452,8 +451,8 @@ function usePaged(list,init,label){
  const pages=Math.max(1,Math.ceil(list.length/size)),p=Math.min(page,pages-1);
  const go=i=>{setPage(i);window.scrollTo({top:0,behavior:'smooth'})};
  return {items:list.slice(p*size,p*size+size),reset:()=>setPage(0),pager:<Pager n={list.length} p={p} pages={pages} size={size} setPage={go} setSize={setSize} label={label}/>}}
-function PCard({r,mgr,children}){
- const [o,setO]=useState(r.status==='enroute');
+function PCard({r,mgr,open,children}){
+ const [o,setO]=useState(r.status==='enroute'||!!open);
  return <div className="card pc"><button className="pc-h" onClick={()=>setO(!o)} aria-expanded={o}>
   <span className="ico">{ICON[r.type]||'🗑️'}</span>
   <span className="grow"><b>{r.type}</b>{mgr&&<span> · {r.client}</span>}<span className="mute" style={{display:'block'}}>{r.addr}</span></span>
@@ -580,8 +579,8 @@ function Client({st,act,user,ui}){
    <Search v={q} set={v=>{setQ(v);pg.reset()}} ph="Search address, type or collector"/>
    <Chips val={fl} set={v=>{setFl(v);pg.reset()}} opts={[['all','All',mine.length],['active','Active',act1.length],['done','Completed',dn.length]]}/>
    {list.length===0&&<div className="card empty">{mine.length?'No pickups match your search.':'No pickups yet. Tap New pickup to get started.'}</div>}
-   <div className="list2">{pg.items.map(r=><PCard key={r.id} r={r}><PayBox r={r} st={st} act={act}/><Rate r={r} act={act}/>
-     <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:12}}>{r.status==='collected'&&<button className="btn alt sm" onClick={()=>again(r)}>🔁 Request again</button>}<a className="btn alt sm" style={{textDecoration:'none',display:'inline-flex',gap:6,alignItems:'center'}} href={waLink(r)} target="_blank" rel="noopener"><Ic n="share" s={15}/>Share</a></div></PCard>)}</div>
+   <div className="list2">{pg.items.map(r=><PCard key={r.id} r={r} open={r.status==='collected'&&!st.pays.some(p=>p.request_id===String(r.id)&&p.status!=='rejected')}><PayBox r={r} st={st} act={act}/><Rate r={r} act={act}/>
+     <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:12}}>{r.status==='collected'&&<button className="btn alt sm" onClick={()=>again(r)}>🔁 Request again</button>}{r.status!=='collected'&&<button className="btn alt sm" style={{color:'var(--red)'}} onClick={()=>act.cancel(r)}>✖ Cancel pickup</button>}<a className="btn alt sm" style={{textDecoration:'none',display:'inline-flex',gap:6,alignItems:'center'}} href={waLink(r)} target="_blank" rel="noopener"><Ic n="share" s={15}/>Share</a></div></PCard>)}</div>
    {pg.pager}</div>}
   {tab==='me'&&<Profile user={user} ui={ui}/>}
   </div>
@@ -593,7 +592,15 @@ function Worker({st,act,user,ui}){
  const who=user.name,[tab,setTab]=useState('jobs');
  const mine=st.reqs.filter(r=>r.worker===who&&r.status!=='collected');
  const done=st.reqs.filter(r=>r.worker===who&&r.status==='collected');
- const [here,setHere]=useState(null),[near,setNear]=useState(false);
+const [here,setHere]=useState(null),[near,setNear]=useState(false);
+ const [avail,setAvail]=useState(!!user.available);
+ const offers=st.reqs.filter(r=>r.status==='requested'&&(r.offered_to||[]).includes(user.id));
+ useEffect(()=>{ /* while available: report GPS now and every 60 s so the server can pick the nearest collector */
+  if(!avail)return;let off=false;
+  const send=()=>{if(!navigator.geolocation){act.toast('GPS is not available on this device.');return}
+   navigator.geolocation.getCurrentPosition(p=>{if(!off)act.avail(true,p.coords.latitude,p.coords.longitude)},()=>act.toast('Turn on location so jobs near you can reach you.'),{enableHighAccuracy:true,timeout:15000,maximumAge:30000})};
+  send();const t=setInterval(send,60000);return()=>{off=true;clearInterval(t)}},[avail]);
+ const toggleAvail=async()=>{const on=!avail;setAvail(on);if(!on){await act.avail(false);act.toast('You are offline. No new pickups will be offered.')}else act.toast('You are available. Nearby pickups will ring here.')};
  const [kg,setKg]=useState({}),[ph,setPh]=useState({}),[busy,setBusy]=useState(null);
  const dd=r=>here&&r.lat!=null?dist(here.lat,here.lng,r.lat,r.lng):null;
  const jobs=[...mine].sort((a,b)=>{const ea=a.status==='enroute',eb=b.status==='enroute';if(ea!==eb)return ea?-1:1;if(near){const x=dd(a),y=dd(b);return (x==null?1e12:x)-(y==null?1e12:y)}return 0});
@@ -606,9 +613,14 @@ function Worker({st,act,user,ui}){
   {tab==='jobs'&&<div>
    <div className="hero2"><div className="hi">{greet()}, {(who||'').split(' ')[0]}</div><div className="sub">{mine.length?mine.length+' job'+(mine.length>1?'s':'')+' to collect':'No jobs right now'}</div>
     <div className="hs">{[['To collect',mine.length],['Completed',done.length],['Kg collected',totalKg]].map(([l,v])=><div key={l}><b>{v}</b><span>{l}</span></div>)}</div></div>
-   {PENDING.size>0&&<div className="alertb" role="alert">🔔 New job assigned. Accept it below to stop the alarm.</div>}
+   <div className="card" style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,marginBottom:10}}><div><b>{avail?'🟢 Available for pickups':'⚪ Offline'}</b><div className="mute">{avail?'Sharing your location so nearby jobs reach you. Keep the app open.':'Go available to receive nearby pickups.'}</div></div><button className={'btn sm '+(avail?'alt':'')} onClick={toggleAvail}>{avail?'Go offline':'Go available'}</button></div>
+   {PENDING.size>0&&<div className="alertb" role="alert">🔔 New pickup nearby. Accept it below to stop the alarm.</div>}
+   {offers.map(r=><div className="card trip" key={'o'+r.id}><div className="row" style={{alignItems:'center'}}><div style={{display:'flex',gap:12,alignItems:'center'}}><span className="ico">{ICON[r.type]||'🗑️'}</span><div><b style={{fontSize:16}}>New pickup offer</b><div className="mute">{r.type} · {r.client}</div></div></div><span className="pill assigned">Offered</span></div>
+    <div style={{marginTop:12,display:'grid',gap:4}}><div style={{display:'flex',gap:8}}><Ic n="pin" s={18}/><span>{r.addr}</span></div><div className="mute" style={{display:'flex',gap:8,alignItems:'center'}}><Ic n="clock" s={18}/>{r.slot}</div></div>
+    {here&&r.lat!=null&&<div style={{marginTop:8}}><span className="chip2">{fmt(dist(here.lat,here.lng,r.lat,r.lng))} away</span></div>}
+    <div style={{display:'flex',gap:8,marginTop:12}}><button className="btn warn full" onClick={()=>act.claim(r.id)}>Accept pickup</button><button className="btn alt full" onClick={()=>act.skip(r.id)}>Skip</button></div></div>)}
    {mine.length>1&&<div className="row" style={{marginBottom:10,alignItems:'center'}}><span className="mute">Order of jobs</span><button className={'btn alt sm'+(near?' on':'')} onClick={locate}>Nearest first</button></div>}
-   {mine.length===0&&<div className="card empty"><div style={{fontSize:34}}>🚛</div><b style={{color:'var(--ink)'}}>No jobs assigned yet</b><div style={{marginTop:4}}>New assignments ring and vibrate this phone.</div></div>}
+   {mine.length===0&&offers.length===0&&<div className="card empty"><div style={{fontSize:34}}>🚛</div><b style={{color:'var(--ink)'}}>No jobs assigned yet</b><div style={{marginTop:4}}>New assignments ring and vibrate this phone.</div></div>}
    <div className="list2">{mp.items.map(r=>{const d=dd(r);return <div className={'card'+(r.status==='enroute'?' trip':'')} key={r.id}>
     <div className="row" style={{alignItems:'center'}}><div style={{display:'flex',gap:12,alignItems:'center'}}><span className="ico">{ICON[r.type]||'🗑️'}</span><div><b style={{fontSize:16}}>{r.type}</b><div className="mute">{r.client}</div></div></div><span className={'pill '+r.status}>{LABEL[r.status]}</span></div>
     <div style={{marginTop:12,display:'grid',gap:4}}><div style={{display:'flex',gap:8}}><Ic n="pin" s={18}/><span>{r.addr}</span></div><div className="mute" style={{display:'flex',gap:8,alignItems:'center'}}><Ic n="clock" s={18}/>{r.slot}</div></div>
@@ -617,7 +629,7 @@ function Worker({st,act,user,ui}){
     <Track s={r.status}/>
     <Nav r={r}/>{r.status==='enroute'&&<Live r={r} act={act}/>}
     {r.status==='assigned'&&PENDING.has(r.id)&&<button className="btn warn full" onClick={()=>act.accept(r.id)}>Accept job (stop alarm)</button>}
-    {r.status==='assigned'&&<button className="btn full" onClick={()=>{window.VOICE_OK=speak('Starting trip.');markAccepted(r.id);stopAlarm(r.id);act.move(r.id,'enroute')}}>Start trip and share GPS</button>}
+    {r.status==='assigned'&&<button className="btn full" onClick={()=>{window.VOICE_OK=speak('Starting trip.');markAccepted(r.id);stopAlarm(r.id);act.accepted(r.id);act.move(r.id,'enroute')}}>Start trip and share GPS</button>}
     {r.status==='enroute'&&<div className="codebox" style={{marginTop:14}}><div className="sec" style={{margin:'0 0 2px'}}>Complete this pickup</div>
      <label htmlFor={'k'+r.id}>Weight collected (kg)</label>
      <Chips val={String(kg[r.id]||'')} set={v=>setKg({...kg,[r.id]:v})} opts={['5','10','20','50'].map(x=>[x,x+' kg'])}/>
@@ -902,7 +914,7 @@ function App(){
   return()=>{off=true}},[uid,session===undefined]);
  useEffect(()=>{if(!configured||!user)return;
   stopAllAlarms();let live=true;const mgr=user.role==='manager';
-  sb.from('requests').select('*').order('created',{ascending:false}).then(({data,error})=>{if(!live)return;error?setMsg('Could not load pickups. Check your connection.'):(data.forEach(r=>{if(r.worker_id===user.id&&r.status==='assigned'&&!getAccepted().includes(r.id))startAlarm(r.id)}),setReqs(data.map(toReq)))});
+  sb.from('requests').select('*').order('created',{ascending:false}).then(({data,error})=>{if(!live)return;error?setMsg('Could not load pickups. Check your connection.'):(data.forEach(r=>{if(r.worker_id===user.id&&r.status==='assigned'&&!r.accepted&&!getAccepted().includes(r.id))startAlarm(r.id);if(r.status==='requested'&&(r.offered_to||[]).includes(user.id)&&!getAccepted().includes(r.id))startAlarm(r.id)}),setReqs(data.map(toReq)))});
   const loadUsers=()=>sb.from('profiles').select('*').order('name').then(({data})=>live&&data&&setUsers(data));
   if(mgr){
    sb.from('notifications').select('*').order('created',{ascending:false}).limit(50).then(({data})=>live&&data&&setNotes(data.map(toNote)));
@@ -910,7 +922,7 @@ function App(){
   let ch=sb.channel('rt-'+user.id).on('postgres_changes',{event:'*',schema:'public',table:'requests'},p=>{
    if(p.eventType==='DELETE'){stopAlarm(p.old.id);setReqs(prev=>prev.filter(x=>x.id!==p.old.id))}
    else{const n=p.new;
-    if(n.worker_id===user.id&&n.status==='assigned'){if(!getAccepted().includes(n.id)&&!PENDING.has(n.id))startAlarm(n.id)}
+    if((n.worker_id===user.id&&n.status==='assigned'&&!n.accepted)||(n.status==='requested'&&(n.offered_to||[]).includes(user.id))){if(!getAccepted().includes(n.id)&&!PENDING.has(n.id))startAlarm(n.id)}
     else stopAlarm(n.id);
     merge(n)}});
   if(mgr)ch=ch.on('postgres_changes',{event:'*',schema:'public',table:'notifications'},p=>{
@@ -925,6 +937,16 @@ function App(){
   const c=sb.channel('me-'+user.id).on('postgres_changes',{event:'UPDATE',schema:'public',table:'profiles',filter:'id=eq.'+user.id},p=>{const n=p.new;
    if(n.blocked){setMsg('Your account has been blocked. Contact RayTECH.');sb.auth.signOut()}else setUser(u=>({...u,...n}))}).subscribe();
   return()=>{sb.removeChannel(c)}},[user&&user.id]);
+ useEffect(()=>{ /* auto-assign: retry unassigned pickups every 30 s while a manager or collector has the app open */
+  if(!configured||!user||user.role==='client')return;
+  const go=()=>{sb.rpc('retry_unassigned').then(()=>{},()=>{})};go();const t=setInterval(go,30000);return()=>clearInterval(t)},[user&&user.id,user&&user.role]);
+ useEffect(()=>{ /* collectors: refresh every 10 s so offers taken by someone else disappear and alarms stop */
+  if(!configured||!user||user.role!=='worker')return;
+  const t=setInterval(()=>{sb.from('requests').select('*').order('created',{ascending:false}).then(({data})=>{if(!data)return;
+   const offered=new Set(data.filter(r=>r.status==='requested'&&(r.offered_to||[]).includes(user.id)).map(r=>r.id));
+   [...PENDING].forEach(id=>{const r=data.find(x=>x.id===id);if(!r||(r.status==='requested'&&!offered.has(id))||(r.status!=='requested'&&r.worker_id!==user.id))stopAlarm(id)});
+   data.forEach(r=>{if(offered.has(r.id)&&!PENDING.has(r.id)&&!getAccepted().includes(r.id))startAlarm(r.id)});
+   setReqs(data.map(toReq))})},10000);return()=>clearInterval(t)},[user&&user.id,user&&user.role]);
  useEffect(()=>{if(!user||!PUSH)return;OneSignalDeferred.push(OS=>{OS.login(user.id);setPushOn(!!OS.Notifications.permission)})},[user&&user.id]);
  useEffect(()=>{document.body.classList.toggle('in',!!user);document.body.classList.toggle('hasnav',!!user&&user.role!=='manager')},[!!user,user&&user.role]);
  useEffect(()=>{if(!msg)return;const t=setTimeout(()=>setMsg(''),3500);return()=>clearTimeout(t)},[msg]);
@@ -944,9 +966,23 @@ function App(){
    gone.forEach(stopAlarm);setReqs(p=>p.filter(x=>!gone.includes(x.id)));
    sb.storage.from('proofs').remove(gone.map(i=>i+'.jpg')).then(()=>{});
    setMsg(gone.length===1?'Pickup deleted.':gone.length+' pickups deleted.')},
-  accept:id=>{const r=reqs.find(x=>x.id===id);markAccepted(id);stopAlarm(id);if(r)note(`${r.worker||user.name} accepted the pickup at ${r.addr}.`);setMsg('Job accepted. Manager notified.')},
+  cancel:async r=>{if(!confirm('Cancel this pickup at '+r.addr+'?'+(r.status==='enroute'?'\n\nThe collector is already on the way.':'')))return;
+   const {data,error}=await sb.from('requests').delete().eq('id',r.id).select('id');
+   if(error||!data||!data.length)return setMsg('Could not cancel. Run cancel-pickup.sql in Supabase once, then try again.');
+   stopAlarm(r.id);setReqs(p=>p.filter(x=>x.id!==r.id));
+   note(`${r.client} cancelled the pickup at ${r.addr}${r.worker?' (collector '+r.worker+')':''}.`);setMsg('Pickup cancelled.')},
+  claim:async id=>{const {data:ok,error}=await sb.rpc('claim_job',{p_request:String(id)});
+   if(error)return fail();
+   if(!ok){stopAlarm(id);setReqs(p=>p.filter(x=>x.id!==id));return setMsg('Sorry, another collector accepted this pickup first.')}
+   markAccepted(id);stopAlarm(id);const {data:row}=await sb.from('requests').select('*').eq('id',id).maybeSingle();if(row)merge(row);
+   setMsg('Job accepted. Manager notified.')},
+  skip:async id=>{stopAlarm(id);setReqs(p=>p.filter(x=>x.id!==id));await sb.rpc('decline_job',{p_request:String(id)});setMsg('Skipped. It goes to the next collector.')},
+  accepted:id=>{sb.rpc('accept_job',{p_request:String(id)}).then(()=>{})},
+  avail:async(on,lat,lng)=>{const {error}=await sb.rpc('set_my_location',{p_lat:lat==null?0:lat,p_lng:lng==null?0:lng,p_available:on});return !error},
+  accept:id=>{const r=reqs.find(x=>x.id===id);markAccepted(id);stopAlarm(id);sb.rpc('accept_job',{p_request:String(id)}).then(()=>{});if(r)note(`${r.worker||user.name} accepted the pickup at ${r.addr}.`);setMsg('Job accepted. Manager notified.')},
   add:async f=>{const {data,error}=await sb.from('requests').insert({uid:user.id,client:f.client,addr:f.addr,type:f.type,slot:f.slot,notes:f.notes,lat:f.lat,lng:f.lng}).select().single();
-   if(error)return fail();merge(data);note(`New pickup request from ${f.client}: ${f.type} at ${f.addr}.`);setMsg('Pickup requested. We will assign a collector soon.')},
+   if(error)return fail();merge(data);note(`New pickup request from ${f.client}: ${f.type} at ${f.addr}.`);setMsg('Pickup requested. We will assign a collector soon.');
+   try{await sb.rpc('auto_assign',{p_request:String(data.id)})}catch(e){}},
   assign:async(id,name)=>{const w=users.find(u=>u.role==='worker'&&!u.blocked&&u.name===name);const r=reqs.find(x=>x.id===id);
    const {data,error}=await sb.from('requests').update({worker:w?w.name:null,worker_id:w?w.id:null,status:w?'assigned':'requested'}).eq('id',id).select().single();
    if(error)return fail();merge(data);if(w)note(`${w.name} assigned to ${r.addr}.`)},
