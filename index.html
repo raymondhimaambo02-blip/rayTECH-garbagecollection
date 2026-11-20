@@ -791,7 +791,7 @@ function Manager({st,act,users,me}){
    </div>
    {cnt('requested')>0&&<div className="card"><h2 style={{marginBottom:8}}>Needs a collector <span className="pill requested">{cnt('requested')}</span></h2>
     {st.reqs.filter(r=>r.status==='requested').slice(0,5).map(r=><div className="note" key={r.id} style={{flexWrap:'wrap',alignItems:'center'}}><span>{ICON[r.type]}</span><div style={{flex:1,minWidth:150}}><b>{r.addr}</b><div className="mute">{r.client} · {r.slot}</div></div>
-     <select aria-label="Assign collector" style={{width:140}} value="" onChange={e=>act.assign(r.id,e.target.value)}><option value="">Assign…</option>{WORKERS.map(w=><option key={w}>{w}</option>)}</select></div>)}
+     <button className="btn alt sm" onClick={()=>act.autoAssign(r.id)}>Find collector now</button></div>)}
     {cnt('requested')>5&&<button className="link" onClick={()=>go('pick','requested')}>See all {cnt('requested')} →</button>}</div>}
    {cnt('enroute')>0&&<div className="card"><h2 style={{marginBottom:8}}>🚛 Live tracking</h2>{st.reqs.filter(r=>r.status==='enroute').map(r=><div key={r.id} style={{marginBottom:14}}><b>{r.worker}</b> heading to {r.addr}<TrackMap r={r}/></div>)}</div>}
    <div className="card"><div className="row" style={{alignItems:'center'}}><h2>🔔 Notifications</h2>{unread>0&&<button className="btn alt sm" onClick={act.read}>Mark all read</button>}</div>
@@ -806,7 +806,7 @@ function Manager({st,act,users,me}){
     <div className="row" style={{alignItems:'center',gap:8,justifyContent:'flex-end'}}><select aria-label="Delete completed pickups older than" className="sz" value={age} onChange={e=>setAge(+e.target.value)}><option value={0}>All completed</option><option value={7}>Older than 7 days</option><option value={30}>Older than 30 days</option><option value={90}>Older than 90 days</option></select>
     <button className="btn sm" style={{background:'var(--red)',color:'#fff'}} disabled={!oldDone.length} onClick={purge}>🗑️ Delete {oldDone.length}</button></div></div></div>
    {pk.length===0&&<div className="card empty">No pickups match.</div>}
-   {pp.items.map(r=><PCard key={r.id} r={r} mgr>{(r.status==='requested'||r.status==='assigned')&&<div><label>Collector</label><select aria-label="Assign collector" value={r.worker||''} onChange={e=>act.assign(r.id,e.target.value)}><option value="">Unassigned</option>{WORKERS.map(w=><option key={w}>{w}</option>)}</select></div>}<button className="btn alt sm" style={{marginTop:12,color:'var(--red)'}} onClick={()=>{if(confirm(r.status==='collected'?'Delete this completed pickup? Payment records are kept.':'This pickup is still ACTIVE. Delete it anyway? The client and collector will lose it.'))act.del(r.id)}}>🗑️ Delete this pickup</button></PCard>)}
+   {pp.items.map(r=><PCard key={r.id} r={r} mgr>{(r.status==='requested'||r.status==='assigned')&&<div><label>Collector (auto-assigned)</label><div className="mute">{r.worker?('🚛 '+r.worker+(r.status==='assigned'&&!r.accepted?' · waiting to accept':'')):'Searching for the nearest collector…'}</div>{r.status==='requested'&&<button className="btn alt sm" style={{marginTop:6}} onClick={()=>act.autoAssign(r.id)}>Find collector now</button>}</div>}<button className="btn alt sm" style={{marginTop:12,color:'var(--red)'}} onClick={()=>{if(confirm(r.status==='collected'?'Delete this completed pickup? Payment records are kept.':'This pickup is still ACTIVE. Delete it anyway? The client and collector will lose it.'))act.del(r.id)}}>🗑️ Delete this pickup</button></PCard>)}
    {pp.pager}</div>}
   {tab==='cli'&&<div>
    <Search v={q} set={v=>{setQ(v);cp.reset()}} ph="Search clients by name or email"/>
@@ -983,6 +983,7 @@ function App(){
   add:async f=>{const {data,error}=await sb.from('requests').insert({uid:user.id,client:f.client,addr:f.addr,type:f.type,slot:f.slot,notes:f.notes,lat:f.lat,lng:f.lng}).select().single();
    if(error)return fail();merge(data);note(`New pickup request from ${f.client}: ${f.type} at ${f.addr}.`);setMsg('Pickup requested. We will assign a collector soon.');
    try{await sb.rpc('auto_assign',{p_request:String(data.id)})}catch(e){}},
+  autoAssign:async id=>{const {data:ok}=await sb.rpc('auto_assign',{p_request:String(id)});setMsg(ok?'Assigned to the nearest collector.':'No eligible collector nearby right now. It will keep retrying.')},
   assign:async(id,name)=>{const w=users.find(u=>u.role==='worker'&&!u.blocked&&u.name===name);const r=reqs.find(x=>x.id===id);
    const {data,error}=await sb.from('requests').update({worker:w?w.name:null,worker_id:w?w.id:null,status:w?'assigned':'requested'}).eq('id',id).select().single();
    if(error)return fail();merge(data);if(w)note(`${w.name} assigned to ${r.addr}.`)},
