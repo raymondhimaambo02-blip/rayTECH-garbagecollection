@@ -832,7 +832,7 @@ function Manager({st,act,users,me}){
    {cp.items.map(u=><ClientRow key={u.id} u={u} reqs={st.reqs.filter(r=>r.uid===u.id)}/>)}
    {cp.pager}</div>}
   {tab==='sales'&&<Sales st={st} act={act}/>}
-  {tab==='team'&&<div className="card"><h2 style={{marginBottom:4}}>Team</h2><div className="mute" style={{marginBottom:10}}>People who register start as clients. Promote trusted people to Collector or Manager (managers have the same powers as you), or block anyone who should not have access.</div>
+  {tab==='team'&&<div className="card"><h2 style={{marginBottom:4}}>Team</h2><div className="mute" style={{marginBottom:10}}>People choose Client or Collector when they register. Only you can promote someone to Manager (or change a role) (managers have the same powers as you), or block anyone who should not have access.</div>
    <Search v={q} set={v=>{setQ(v);tp.reset()}} ph="Search people"/>
    <Chips val={rf} set={v=>{setRf(v);tp.reset()}} opts={[['all','All',users.length],...Object.entries(ROLE).map(([k,l])=>[k,l+'s',users.filter(u=>u.role===k).length]),['blocked','🚫 Blocked',users.filter(u=>u.blocked).length]]}/>
    {tp.items.map(u=>{const mine1=u.id===me;return <div className="note" key={u.id} style={{alignItems:'center',flexWrap:'wrap',opacity:u.blocked?.65:1}}><Av u={u}/><div style={{flex:1,minWidth:150}}><b>{u.name}</b>{mine1&&<span className="pill" style={{marginLeft:6}}>You</span>}{u.blocked&&<span className="pill" style={{marginLeft:6,background:'#FBD9CE',color:'#7A2410'}}>Blocked</span>}<div className="mute">{u.email}</div></div>
@@ -859,7 +859,7 @@ const toNote=x=>({id:x.id,text:x.text,read:x.is_read,time:new Date(x.created).to
 
 function Auth({msg,setMsg}){
  const [mode,setMode]=useState('login');
- const [f,setF]=useState({name:'',email:'',pw:'',pw2:''});
+ const [f,setF]=useState({name:'',email:'',pw:'',pw2:'',role:'client'});const [pic,setPic]=useState(null);
  const set=k=>e=>setF({...f,[k]:e.target.value});
  const em=f.email.trim().toLowerCase();
  const go=m=>{setMode(m);setMsg('');setF({...f,pw:'',pw2:''})};
@@ -868,7 +868,8 @@ function Auth({msg,setMsg}){
   if(!f.name.trim())return setMsg('Enter your full name.');
   if(f.pw.length<6)return setMsg('Password must be at least 6 characters.');
   if(f.pw!==f.pw2)return setMsg('Passwords do not match.');
-  const {data,error}=await sb.auth.signUp({email:em,password:f.pw,options:{data:{name:f.name.trim()}}});
+  const {data,error}=await sb.auth.signUp({email:em,password:f.pw,options:{data:{name:f.name.trim(),requested_role:f.role==='worker'?'worker':'client'}}});
+  if(!error&&pic)window.PENDING_AVATAR=pic;
   if(error)return setMsg(errTxt(error));
   if(!data.session){go('login');setMsg('Account created. Check your email to confirm, then log in.')}};
  const forgot=async()=>{if(!em)return setMsg('Enter your account email.');const {error}=await sb.auth.resetPasswordForEmail(em,{redirectTo:location.href.split('#')[0]});setMsg(error?errTxt(error):'Reset link sent. Check your inbox and spam folder.')};
@@ -881,9 +882,10 @@ function Auth({msg,setMsg}){
    {mode==='login'&&<div>{field('e','Email','email','email','you@example.com')}{field('p','Password','pw','password')}
     <button className="btn full" onClick={login}>Log in</button>
     <div className="row" style={{marginTop:8}}><button className="link" onClick={()=>go('forgot')}>Forgot password?</button><button className="link" onClick={()=>go('register')}>Create account</button></div></div>}
-   {mode==='register'&&<div>{field('n','Full name','name')}{field('e','Email','email','email')}{field('p','Password','pw','password','At least 6 characters')}{field('p2','Confirm password','pw2','password')}
+   {mode==='register'&&<div><div><label>I am registering as</label><Chips val={f.role} set={v=>setF({...f,role:v})} opts={[['client','Client'],['worker','Collector']]}/><div className="mute" style={{marginTop:4}}>{f.role==='worker'?'Collect garbage and earn per pickup.':'Request garbage pickups.'}</div></div>{field('n','Full name','name')}{field('e','Email','email','email')}{field('p','Password','pw','password','At least 6 characters')}{field('p2','Confirm password','pw2','password')}
+    <div><label htmlFor="rpic">Profile picture (optional)</label><div style={{display:'flex',gap:10,alignItems:'center'}}>{pic&&<Thumb file={pic}/>}<input id="rpic" type="file" accept="image/*" onChange={e=>setPic(e.target.files[0]||null)}/></div></div>
     <button className="btn full" onClick={register}>Create account</button>
-    <div className="mute" style={{marginTop:8}}>Collectors and managers: register here, then ask your RayTECH manager to set your role.</div>
+    <div className="mute" style={{marginTop:8}}>Managers: register as a client or collector, then ask an existing RayTECH manager to promote you.</div>
     <button className="link" onClick={()=>go('login')}>Back to log in</button></div>}
    {mode==='forgot'&&<div>{field('e','Account email','email','email')}
     <button className="btn full" onClick={forgot}>Email me a reset link</button>
@@ -926,7 +928,10 @@ function App(){
  useEffect(()=>{if(!configured||session===undefined)return;
   if(!session){setUser(null);setReqs([]);setNotes([]);setUsers([]);setPays([]);return}
   let off=false;
-  (async()=>{for(let i=0;i<5;i++){const {data}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();if(off)return;if(data){if(data.blocked){setMsg('Your account has been blocked. Contact RayTECH.');sb.auth.signOut();return}setUser(data);return}await new Promise(r=>setTimeout(r,500))}
+  (async()=>{for(let i=0;i<5;i++){const {data}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();if(off)return;if(data){if(data.blocked){setMsg('Your account has been blocked. Contact RayTECH.');sb.auth.signOut();return}let d=data;try{const rq=session.user.user_metadata&&session.user.user_metadata.requested_role;
+   if(rq==='worker'&&d.role==='client'&&d.role_claimed===false){const {error:ce}=await sb.rpc('claim_signup_role');if(!ce)d={...d,role:'worker',role_claimed:true}}
+   if(window.PENDING_AVATAR){const f=window.PENDING_AVATAR;window.PENDING_AVATAR=null;const path=d.id+'.jpg';const up=await sb.storage.from('avatars').upload(path,await sq(f),{contentType:'image/jpeg',upsert:true});if(!up.error){const url=sb.storage.from('avatars').getPublicUrl(path).data.publicUrl+'?t='+Date.now();const {error:ae}=await sb.rpc('set_my_avatar',{p_url:url});if(!ae)d={...d,avatar_url:url}}}}catch(e){}
+   if(off)return;setUser(d);return}await new Promise(r=>setTimeout(r,500))}
    setMsg('Account profile not found. Ask your manager for help.');sb.auth.signOut()})();
   return()=>{off=true}},[uid,session===undefined]);
  useEffect(()=>{if(!configured||!user)return;
