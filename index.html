@@ -593,7 +593,7 @@ function Profile({user,ui}){
 function Client({st,act,user,ui}){
  const [tab,setTab]=useState('home');
  const days=dayOpts(),hr=new Date().getHours(),open0=WINS.findIndex(w=>parseInt(w)>hr);
- const [di,setDi]=useState(open0<0?1:0),[wi,setWi]=useState(open0<0?0:open0);
+ const [di,setDi]=useState(open0<0?1:0),[wi,setWi]=useState(open0<0?0:open0),[ct,setCt]=useState('');
  const [f,setF]=useState({client:user.name,addr:'',type:TYPES[0],notes:'',lat:null,lng:null});
  const [q,setQ]=useState(''),[fl,setFl]=useState('all');
  const set=k=>e=>setF({...f,[k]:e.target.value});
@@ -611,9 +611,9 @@ function Client({st,act,user,ui}){
   navigator.geolocation.getCurrentPosition(p=>{const lat=p.coords.latitude,lng=p.coords.longitude;setF(x=>({...x,lat,lng,addr:x.addr.trim()?x.addr:'GPS location '+lat.toFixed(5)+', '+lng.toFixed(5)}));act.toast('Location pinned.')},()=>act.toast('Could not get your location. Allow location access or type the address.'),{enableHighAccuracy:true,timeout:15000})};
  const submit=async()=>{
   if(!f.client.trim()||!f.addr.trim())return act.toast('Enter your name and pickup address.');
-  if(di===0&&parseInt(WINS[wi])<=new Date().getHours())return act.toast('That time has passed. Choose a later slot.');
+  if(ct){const n=new Date(),nm=String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');if(di===0&&ct<=nm)return act.toast('That time has passed. Choose a later time.')}else if(di===0&&parseInt(WINS[wi])<=new Date().getHours())return act.toast('That time has passed. Choose a later slot.');
   let ff={...f};if(ff.lat==null||ff.lng==null){try{const g=await geocode(ff.addr.trim()+', Zambia');ff.lat=g.lat;ff.lng=g.lng}catch(e){}}
-  await act.add({...ff,slot:days[di][0]+' '+WINS[wi],uid:user.id});setF({...f,notes:'',lat:null,lng:null});setTab('mine')};
+  await act.add({...ff,slot:days[di][0]+' '+(ct||WINS[wi]),uid:user.id});setCt('');setF({...f,notes:'',lat:null,lng:null});setTab('mine')};
  const again=r=>{setF({...f,addr:r.addr,type:r.type,lat:r.lat,lng:r.lng});setTab('new');window.scrollTo({top:0,behavior:'smooth'});act.toast('Details copied. Choose a slot and send.')};
  return <>
   <div className="fade" key={tab}>
@@ -642,9 +642,10 @@ function Client({st,act,user,ui}){
    <div className="row" style={{marginTop:4,alignItems:'center'}}><button type="button" className="btn alt sm" onClick={gps}>📍 Use my GPS location</button>{f.lat!=null&&<span className="mute">Pinned {f.lat.toFixed(5)}, {f.lng.toFixed(5)} <button className="link" onClick={()=>setF({...f,lat:null,lng:null})}>Clear</button></span>}</div>
    <div className="sec">When</div>
    <Chips val={String(di)} set={v=>{const n=+v;setDi(n);if(n===0&&parseInt(WINS[wi])<=hr){const o=WINS.findIndex(w=>parseInt(w)>hr);if(o>=0)setWi(o)}}} opts={days.map((d,i)=>[String(i),d[0]])}/>
-   <div className="slots">{WINS.map((w,i)=><button key={w} type="button" className={'slot'+(wi===i?' on':'')} disabled={di===0&&parseInt(w)<=hr} onClick={()=>setWi(i)}>{w}</button>)}</div>
+   <div className="slots">{WINS.map((w,i)=><button key={w} type="button" className={'slot'+(!ct&&wi===i?' on':'')} disabled={di===0&&parseInt(w)<=hr} onClick={()=>{setWi(i);setCt('')}}>{w}</button>)}</div>
+   <label htmlFor="ct">Or choose your own time</label><div className="row" style={{alignItems:'center',gap:8}}><input id="ct" type="time" value={ct} onChange={e=>setCt(e.target.value)} aria-label="Your own pickup time" style={{maxWidth:170}}/>{ct&&<button type="button" className="link" onClick={()=>setCt('')}>Use a slot instead</button>}</div>
    <label htmlFor="o">Notes for the crew</label><textarea id="o" rows="2" value={f.notes} onChange={set('notes')} placeholder="Where to find the waste, gate colour, etc."/>
-   <div className="sum"><Ic n="clock" s={18}/><span>{f.type} · {days[di][0]}, {WINS[wi]}</span></div>
+   <div className="sum"><Ic n="clock" s={18}/><span>{f.type} · {days[di][0]}, {ct||WINS[wi]}</span></div>
    <button className="btn full" onClick={submit}>Request pickup</button></div>}
   {tab==='mine'&&<div>
    <Search v={q} set={v=>{setQ(v);pg.reset()}} ph="Search address, type or collector"/>
