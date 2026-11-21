@@ -520,9 +520,10 @@ const greet=()=>{const h=new Date().getHours();return h<12?'Good morning':h<17?'
 const waLink=r=>'https://wa.me/?text='+encodeURIComponent(`RayTECH pickup: ${r.type} at ${r.addr} (${r.slot}). Status: ${LABEL[r.status]}.`);
 /* ===== Tell a friend: share APK file + link ===== */
 const APK_NAME='garbagecollection-voice.apk';
-const apkUrl=()=>new URL(APK_NAME,location.href.split('#')[0].split('?')[0]).href;
+const apkUrl=()=>{try{return new URL(APK_NAME,location.href.split('#')[0].split('?')[0]).href}catch(e){return APK_NAME}};
 let APK_P=null;
 const getApk=()=>APK_P||(APK_P=fetch(apkUrl()).then(r=>{if(!r.ok)throw new Error('apk');return r.blob()}).then(b=>new File([b],APK_NAME,{type:'application/vnd.android.package-archive'})).catch(e=>{APK_P=null;throw e}));
+class SafeBox extends React.Component{constructor(p){super(p);this.state={bad:false}}static getDerivedStateFromError(){return{bad:true}}componentDidCatch(e){try{console.error('TellFriend',e)}catch(x){}}render(){return this.state.bad?null:this.props.children}}
 function TellFriend({url}){
  const [busy,setBusy]=useState(false),[note,setNote]=useState('');
  const apk=apkUrl();
@@ -584,7 +585,7 @@ function Profile({user,ui}){
   <div className="card"><h3>Appearance</h3><div className="mute" style={{marginBottom:8}}>Match your phone, or choose a theme.</div><Chips val={t} set={setT} opts={[['auto','Auto'],['light','Light'],['dark','Dark']]}/></div>
   {PUSH&&<div className="card"><h3>Alerts</h3>{ui.pushOn?<div className="mute" style={{marginTop:6}}>Alerts are on for this phone.</div>:<div><div className="mute" style={{margin:'6px 0 10px'}}>Get notified even when the app is closed.</div><button className="btn sm" onClick={ui.enablePush}>Turn on alerts</button></div>}</div>}
   {!ins.standalone&&(ins.can||ins.ios)&&<div className="card"><h3>Install the app</h3><div className="mute" style={{margin:'6px 0 10px'}}>{ins.can?'Add RayTECH to your home screen for quick access.':'On iPhone, tap Share, then Add to Home Screen.'}</div>{ins.can&&<button className="btn sm" onClick={ins.go}>Install app</button>}</div>}
-  <TellFriend url={url}/>
+  <SafeBox><TellFriend url={url}/></SafeBox>
   <button className="btn alt full" style={{display:'flex',gap:8,justifyContent:'center',alignItems:'center'}} onClick={ui.logout}><Ic n="out" s={18}/>Log out</button>
   <div className="sigp">Created by Raymond Himaambo@innovations<br/><a href="tel:+260979566905">+260979566905</a></div>
  </div>}
