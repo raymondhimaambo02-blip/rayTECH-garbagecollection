@@ -197,8 +197,6 @@ body.hasnav .sig{display:none}
 .drop:focus-within{border-color:var(--moss)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .thumb{width:56px;height:56px;object-fit:cover;border-radius:10px;flex:none}
-.crow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px}
-.crow>.mute{flex:1 1 100%}
 .chip2{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:99px;background:var(--soft);color:var(--moss)}
 .alertb{display:flex;align-items:center;gap:10px;background:#FBE3D3;color:#7A3410;border:1px solid #F1BE9B;border-radius:14px;padding:12px 14px;margin-bottom:12px;font-weight:600}
 .offline{position:sticky;top:0;z-index:60;background:var(--red);color:#fff;text-align:center;padding:7px;font-size:13px;font-weight:600;border-radius:0 0 12px 12px}
@@ -353,11 +351,7 @@ function VoiceNav({r,pos}){
      s.busy=false}
    }
    const toDest=dist(pos.lat,pos.lng,s.dest.lat,s.dest.lng);
-   const weak=(pos.acc||0)>50;
-   if(weak){setNxt(toDest<150?'GPS signal is weak. Move to open sky to confirm arrival.':'Weak GPS signal (±'+Math.round(pos.acc)+' m)');if(!s.said.weak){s.said.weak=1;say('GPS signal is weak.')}}
-   else if(s.said.weak)s.said.weak=0;
-   if(!weak&&toDest<50){if(!s.said.arr){s.said.arr=1;say('You have arrived at your destination.');setNxt('You have arrived')}return}
-   if(weak&&toDest<150)return;
+   if(toDest<40){if(!s.said.arr){s.said.arr=1;say('You have arrived at your destination.');setNxt('You have arrived')}return}
    const t=Date.now();let off=false;
    if(s.route){const st=s.route.steps;let min=1e9;
     for(let k=s.i;k<st.length&&k<s.i+3;k++){const c=st[k].geometry.coordinates;for(let j=0;j<c.length-1;j++){const d=segD(pos,c[j],c[j+1]);if(d<min)min=d}}
@@ -387,23 +381,20 @@ function VoiceNav({r,pos}){
 }
 
 function Live({r,act}){
- const [acc,setAcc]=useState(null);const [err,setErr]=useState('');const [pos,setPos]=useState(null);const [eta,setEta]=useState(null);
+ const [acc,setAcc]=useState(null);const [err,setErr]=useState('');const [pos,setPos]=useState(null);
  useEffect(()=>{
   if(!navigator.geolocation){setErr('GPS is not available on this device.');return}
   const w=navigator.geolocation.watchPosition(p=>{setErr('');setAcc(Math.round(p.coords.accuracy));setPos({lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy});act.pos(r.id,p.coords.latitude,p.coords.longitude)},()=>setErr('Allow location access so the client and manager can track you.'),{enableHighAccuracy:true,maximumAge:2000,timeout:20000});
   return()=>navigator.geolocation.clearWatch(w)},[r.id]);
- return <div className="codebox">{err?<span style={{color:'var(--red)'}}>{err}</span>:<span>Sharing live GPS{acc!=null?` (accuracy ${acc} m)`:''}…</span>}{!err&&acc!=null&&acc>50&&<div className="alertb" style={{marginTop:8,display:'block'}}>⚠️ Weak GPS signal (±{acc} m). Step outside or away from buildings. Arrival is only confirmed when accuracy is under 50 m.</div>}<TrackMap r={r} me={pos} onEta={setEta}/><NotifyCustomer r={r} eta={eta} act={act}/><VoiceNav r={r} pos={pos}/></div>
+ return <div className="codebox">{err?<span style={{color:'var(--red)'}}>{err}</span>:<span>Sharing live GPS{acc!=null?` (accuracy ${acc} m)`:''}…</span>}<TrackMap r={r} me={pos}/><VoiceNav r={r} pos={pos}/></div>
 }
 
 /* ===== Live map with route + ETA (Leaflet + OpenStreetMap + OSRM) ===== */
 const TILES=[['https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Tiles &copy; Esri'}],['https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{subdomains:'abcd',maxZoom:19,attribution:'&copy; OpenStreetMap contributors &copy; CARTO'}],['https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}]];
 const GEO={};const geoOnce=async a=>{if(GEO[a])return GEO[a];const g=await geocode(a);GEO[a]=g;return g};
-function LiveMap({r,me,onEta}){
+function LiveMap({r,me}){
  const box=useRef(null),M=useRef({}),[eta,setEta]=useState(null),[gd,setGd]=useState(null);
  const p=me||r.pos,dest=r.lat!=null?{lat:r.lat,lng:r.lng}:gd;
- const {role:vrole}=useContext(PeopleCtx),heard=useRef(false);
- useEffect(()=>{onEta&&onEta(eta)},[eta]);
- useEffect(()=>{if(vrole!=='client'||me||!eta||eta.min>5||heard.current)return;heard.current=true;try{navigator.vibrate&&navigator.vibrate([300,150,300])}catch(e){}speak('Your collector is about '+eta.min+(eta.min===1?' minute':' minutes')+' away.')},[eta&&eta.min<=5]);
  useEffect(()=>{if(r.lat!=null||!r.addr)return;let off=false;geoOnce(r.addr).then(g=>{if(!off)setGd(g)}).catch(()=>{});return()=>{off=true}},[r.id,r.addr,r.lat]);
  useEffect(()=>{const L=window.L;if(!L||!box.current)return;
   const map=L.map(box.current,{zoomControl:false,scrollWheelZoom:false}).setView([p.lat,p.lng],15);
@@ -427,15 +418,15 @@ function LiveMap({r,me,onEta}){
     setEta({min:Math.max(1,Math.round(rt.duration/60)),km:rt.distance/1000})}).catch(()=>{if(M.current!==m)return;const d=dist(p.lat,p.lng,dest.lat,dest.lng);setEta({min:Math.max(1,Math.round(d/1000/25*60)),km:d/1000,approx:true})})}
  },[p&&p.lat,p&&p.lng,dest&&dest.lat,dest&&dest.lng]);
  const fit=()=>{const m=M.current;if(!m.map||!p)return;dest?m.map.fitBounds([[p.lat,p.lng],[dest.lat,dest.lng]],{padding:[40,40],maxZoom:16}):m.map.setView([p.lat,p.lng],15)};
- return <>{vrole==='client'&&!me&&eta&&eta.min<=5&&<div className="alertb" role="status" style={{marginTop:10}}>🚛 Your collector is about {eta.min} min away. Please have your waste ready.</div>}<div className="lmap"><div ref={box} style={{height:'100%'}}/>
+ return <div className="lmap"><div ref={box} style={{height:'100%'}}/>
   {eta?<div className="eta">≈ {eta.min} min<small>{eta.km.toFixed(1)} km {eta.approx?'straight line':'by road'}</small></div>:<div className="eta">Live position<small>Updating…</small></div>}
-  <button className="btn alt sm recenter" onClick={fit}>Recenter</button></div></>
+  <button className="btn alt sm recenter" onClick={fit}>Recenter</button></div>
 }
-function TrackMap({r,me,onEta}){
+function TrackMap({r,me}){
  if(r.status!=='enroute')return null;
  const p=me||r.pos;
  if(!p)return <div className="mute" style={{marginTop:8}}>Waiting for the collector's GPS signal…</div>;
- return window.L?<LiveMap r={r} me={me} onEta={onEta}/>:<TrackSvg r={r}/>}
+ return window.L?<LiveMap r={r} me={me}/>:<TrackSvg r={r}/>}
 
 function TrackSvg({r}){
  if(r.status!=='enroute')return null;
@@ -488,7 +479,7 @@ function PCard({r,mgr,open,children}){
   <span className="grow"><b>{r.type}</b>{mgr&&<span> · {r.client}</span>}<span className="mute" style={{display:'block'}}>{r.addr}</span></span>
   <span className={'pill '+r.status}>{LABEL[r.status]}</span><span className="chev">{o?'▲':'▼'}</span></button>
   <Stepper s={r.status}/>
-  {o&&<div className="pc-b"><div className="mute">🕒 {r.slot} · requested {ago(T(r))}</div>{r.notes&&<div>“{r.notes}”</div>}{r.worker&&<div className="mute" style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>🚛 <Person id={r.worker_id} name={r.worker} role="worker"/>{r.kg?<span>{' · '+r.kg+' kg collected'}</span>:null}</div>}<JobContacts r={r}/><TrackMap r={r}/><Proof r={r}/><Nav r={r}/>{children}</div>}</div>}
+  {o&&<div className="pc-b"><div className="mute">🕒 {r.slot} · requested {ago(T(r))}</div>{r.notes&&<div>“{r.notes}”</div>}{r.worker&&<div className="mute" style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>🚛 <Person id={r.worker_id} name={r.worker} role="worker"/>{r.kg?<span>{' · '+r.kg+' kg collected'}</span>:null}</div>}<TrackMap r={r}/><Proof r={r}/><Nav r={r}/>{children}</div>}</div>}
 function Bars({data}){const m=Math.max(1,...data.map(d=>d.v));return <svg viewBox={'0 0 '+data.length*40+' 104'} width="100%" role="img" aria-label="Pickups requested in the last 7 days">{data.map((d,i)=>{const h=d.v/m*60;return <g key={i}><rect x={i*40+6} y={78-h} width="28" height={Math.max(h,3)} rx="7" fill="var(--moss)" opacity={d.v?1:.25}/><text x={i*40+20} y={73-h} textAnchor="middle" fontSize="11" fill="var(--ink)">{d.v?(d.v>=1000?(d.v/1000).toFixed(1)+'k':d.v):''}</text><text x={i*40+20} y="98" textAnchor="middle" fontSize="11" fill="var(--mute)">{d.l}</text></g>})}</svg>}
 
 /* ===== v2 interface: shared pieces ===== */
@@ -527,44 +518,34 @@ const WINS=['08:00–10:00','10:00–12:00','12:00–14:00','14:00–16:00'];
 const dayOpts=()=>{const d=new Date(),f=n=>{const x=new Date(d);x.setDate(d.getDate()+n);return x};return [['Today',f(0)],['Tomorrow',f(1)],[f(2).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'}),f(2)]]};
 const greet=()=>{const h=new Date().getHours();return h<12?'Good morning':h<17?'Good afternoon':'Good evening'};
 const waLink=r=>'https://wa.me/?text='+encodeURIComponent(`RayTECH pickup: ${r.type} at ${r.addr} (${r.slot}). Status: ${LABEL[r.status]}.`);
-
-/* ===== Phone numbers: call, WhatsApp and SMS (number entered at registration is used everywhere) ===== */
-const normPhone=v=>{let d=String(v||'').trim().replace(/[\s().-]/g,'');if(!d)return '';const plus=d[0]==='+';d=d.replace(/\D/g,'');if(!d)return '';
- if(plus){}else if(d.startsWith('00'))d=d.slice(2);else if(d.length===12&&d.startsWith('260')){}else if(d.length===10&&d[0]==='0')d='260'+d.slice(1);else if(d.length===9)d='260'+d;else return '';
- if(!/^\d{9,15}$/.test(d))return '';if(d.startsWith('260')&&d.length!==12)return '';return '+'+d};
-const showPhone=p=>{const n=normPhone(p);return n.startsWith('+260')?'0'+n.slice(4):n};
-const telHref=p=>'tel:'+normPhone(p);
-const waHref=(p,t)=>'https://wa.me/'+normPhone(p).replace('+','')+(t?'?text='+encodeURIComponent(t):'');
-const smsHref=(p,t)=>'sms:'+normPhone(p)+(t?'?body='+encodeURIComponent(t):'');
-const first=n=>String(n||'').trim().split(/\s+/)[0]||'there';
-const hello=(role,me,nm,r)=>role==='manager'?`Hello ${first(nm)}, this is RayTECH about the pickup at ${r.addr}.`:role==='worker'?`Hello ${first(nm)}, this is ${me||'your collector'} from RayTECH, your collector for the pickup at ${r.addr}.`:`Hello ${first(nm)}, this is ${me||'your client'} about my RayTECH pickup at ${r.addr}.`;
-function Contact({phone,name,msg,label}){
- const n=normPhone(phone);if(!n)return null;
- const b={display:'inline-flex',gap:6,alignItems:'center',textDecoration:'none'};
- return <div className="crow">{label&&<span className="mute">{label}</span>}
-  <a className="btn alt sm" style={b} href={telHref(n)} aria-label={'Call '+(name||'')}>📞 Call</a>
-  <a className="btn alt sm" style={b} href={waHref(n,msg)} target="_blank" rel="noopener" aria-label={'WhatsApp '+(name||'')}>💬 WhatsApp</a>
-  <a className="btn alt sm" style={b} href={smsHref(n,msg)} aria-label={'SMS '+(name||'')}>✉️ SMS</a></div>}
-function JobContacts({r}){
- const {people,me,meName,role}=useContext(PeopleCtx);
- if(r.status==='requested'&&role!=='manager')return null;
- const rows=[];
- const add=(id,nm,ic)=>{const p=people[id];if(!id||id===me)return;if(!p||!normPhone(p.phone)){rows.push(<div key={id} className="mute" style={{marginTop:4}}>{ic} {first(nm)} · no phone number available yet</div>);return}rows.push(<Contact key={id} phone={p.phone} name={nm} label={ic+' '+first(nm)+' · '+showPhone(p.phone)} msg={hello(role,meName,nm,r)}/>)};
- add(r.worker_id,r.worker,'🚛');add(r.uid,r.client,'🏠');
- return rows.length?<div style={{marginTop:6}}>{rows}</div>:null}
-function NotifyCustomer({r,eta,act}){
- const {people,meName}=useContext(PeopleCtx);
- const ph=normPhone((people[r.uid]||{}).phone),mins=eta?eta.min:null,near=mins!=null&&mins<=5,sent=useRef(false);
- useEffect(()=>{if(!near||sent.current)return;sent.current=true;try{navigator.vibrate&&navigator.vibrate([200,100,200])}catch(e){}act.toast('You are about '+mins+' min away. Tell the customer with WhatsApp or SMS.');act.near&&act.near(r,mins)},[near]);
- const msg=`Hello ${first(r.client)}, this is ${meName||'your collector'} from RayTECH. ${mins!=null?`I am about ${mins} minute${mins===1?'':'s'} away`:'I am on my way'} to ${r.addr}. Please have your waste ready. Thank you.`;
- return <div className={near?'alertb':'codebox'} style={{marginTop:10,display:'block'}}>
-  <b>{near?`📣 You are about ${mins} min away. Tell ${first(r.client)} now.`:`Message ${first(r.client)}`}</b>
-  {ph?<Contact phone={ph} name={r.client} msg={msg} label={showPhone(ph)}/>:<div className="mute" style={{marginTop:4}}>{first(r.client)} has not added a phone number yet.</div>}</div>}
-function PhoneEdit({user,ui,cta}){
- const [v,setV]=useState(user.phone?showPhone(user.phone):'');const ok=normPhone(v),same=ok&&ok===normPhone(user.phone);
- return <div><input type="tel" inputMode="tel" autoComplete="tel" value={v} onChange={e=>setV(e.target.value)} placeholder="0971234567" aria-label="Phone number"/>
-  <div className="mute" style={{marginTop:4}}>{v&&!ok?'Enter a number like 0971234567 or +260971234567.':'Use a number that has WhatsApp.'}</div>
-  <button className="btn sm" style={{marginTop:10}} disabled={!ok||same} onClick={()=>ui.savePhone(v)}>{cta||'Save number'}</button></div>}
+/* ===== Tell a friend: share APK file + link ===== */
+const APK_NAME='garbagecollection-voice.apk';
+const apkUrl=()=>new URL(APK_NAME,location.href.split('#')[0].split('?')[0]).href;
+let APK_P=null;
+const getApk=()=>APK_P||(APK_P=fetch(apkUrl()).then(r=>{if(!r.ok)throw new Error('apk');return r.blob()}).then(b=>new File([b],APK_NAME,{type:'application/vnd.android.package-archive'})).catch(e=>{APK_P=null;throw e}));
+function TellFriend({url,toast}){
+ const [busy,setBusy]=useState(false);
+ const apk=apkUrl();
+ const text='Book garbage pickups and track your collector live with RayTECH.\nOpen the app: '+url+'\nAndroid app (APK): '+apk;
+ const wa='https://wa.me/?text='+encodeURIComponent(text);
+ useEffect(()=>{if(navigator.share&&navigator.canShare)getApk().catch(()=>{})},[]);
+ const both=async()=>{
+  if(!navigator.share){window.open(wa,'_blank','noopener');return}
+  setBusy(true);
+  try{
+   let f=null;try{f=await getApk()}catch(e){}
+   if(f&&navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],title:'RayTECH',text});}
+   else{await navigator.share({title:'RayTECH',text});toast&&toast('This phone cannot attach the APK, so both links were shared instead.')}
+  }catch(e){if(!e||e.name!=='AbortError'){window.open(wa,'_blank','noopener')}}
+  setBusy(false)};
+ const bs={display:'inline-flex',gap:8,alignItems:'center',textDecoration:'none'};
+ return <div className="card"><h3>Tell a friend</h3>
+  <div className="mute" style={{margin:'6px 0 10px'}}>Send your friend the Android app (APK) and the web link together.</div>
+  <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+   <button className="btn sm" style={bs} onClick={both} disabled={busy}><Ic n="share" s={16}/>{busy?'Preparing…':'Share APK + link'}</button>
+   <a className="btn alt sm" style={bs} href={wa} target="_blank" rel="noopener"><Ic n="share" s={16}/>WhatsApp (both links)</a>
+   <a className="btn alt sm" style={bs} href={apk} download={APK_NAME}>Download APK</a>
+  </div></div>};
 const getRated=()=>{try{return JSON.parse(localStorage.getItem('rated_jobs')||'{}')}catch(e){return{}}};
 
 function BottomNav({tabs,tab,set}){return <nav className="bnav" aria-label="Main">{tabs.map(([k,ic,l,b])=><button key={k} className={tab===k?'on':''} aria-current={tab===k?'page':undefined} onClick={()=>{set(k);window.scrollTo({top:0})}}><Ic n={ic}/>{l}{b>0&&<em>{b}</em>}</button>)}</nav>}
@@ -578,14 +559,12 @@ function Rate({r,act}){
 function Person({id,name,role}){
  const {people,open}=useContext(PeopleCtx);const p=people[id]||{};
  if(!name)return null;
- return <button type="button" className="person" onClick={()=>open({id,name:p.name||name,role:p.role||role,avatar_url:p.avatar_url||null,jobs:p.jobs,phone:p.phone||null})} aria-label={'View profile of '+name}><Av u={{name:p.name||name,avatar_url:p.avatar_url}} cls="xs"/><span>{name}</span></button>}
+ return <button type="button" className="person" onClick={()=>open({id,name:p.name||name,role:p.role||role,avatar_url:p.avatar_url||null,jobs:p.jobs})} aria-label={'View profile of '+name}><Av u={{name:p.name||name,avatar_url:p.avatar_url}} cls="xs"/><span>{name}</span></button>}
 function PersonSheet({p,onClose}){
- const {meName,role}=useContext(PeopleCtx);
  return <div className="ov" role="dialog" aria-modal="true" aria-label={p.name+' profile'} onClick={onClose}><div className="card" onClick={e=>e.stopPropagation()}>
   {p.avatar_url?<img className="pbig" src={p.avatar_url} alt={p.name+' profile picture'}/>:<div className="pbig">{ini(p.name)}</div>}
   <h2 style={{marginBottom:2}}>{p.name}</h2><div className="mute">{p.role==='worker'?'🚛 Collector':p.role==='manager'?'Manager':'🏠 Client'}</div>
   {p.jobs!=null&&<div className="chip2" style={{display:'inline-block',marginTop:10}}>{p.jobs} pickup{p.jobs===1?'':'s'} with you</div>}
-  {normPhone(p.phone)&&<div style={{marginTop:12}}><div className="mute">📱 {showPhone(p.phone)}</div><Contact phone={p.phone} name={p.name} msg={`Hello ${first(p.name)}, this is ${role==='manager'?'RayTECH':(meName||'a RayTECH user')}.`}/></div>}
   <button className="btn full" style={{marginTop:16}} onClick={onClose}>Close</button></div></div>}
 function Profile({user,ui}){
  const [t,setT]=useTheme(),ins=useInstall(),[up,setUp]=useState(false),[nrcIn,setNrcIn]=useState('');
@@ -602,50 +581,18 @@ function Profile({user,ui}){
    :<div><div className="mute" style={{margin:'8px 0'}}>Add your NRC once. After saving it cannot be changed.</div>
     <input value={nrcIn} onChange={e=>setNrcIn(fmtNRC(e.target.value))} inputMode="numeric" placeholder="123456/10/1" maxLength={11} aria-label="NRC number"/>
     <button className="btn sm" style={{marginTop:10}} onClick={()=>ui.saveNrc(nrcIn)}>Save NRC</button></div>}</div>
-  <div className="card"><h3>Phone number</h3><div className="mute" style={{margin:'6px 0 8px'}}>Used for calls and WhatsApp with your {user.role==='worker'?'customers':user.role==='manager'?'team and clients':'collector'}.</div><PhoneEdit key={user.phone||'none'} user={user} ui={ui}/></div>
   <div className="card"><h3>Appearance</h3><div className="mute" style={{marginBottom:8}}>Match your phone, or choose a theme.</div><Chips val={t} set={setT} opts={[['auto','Auto'],['light','Light'],['dark','Dark']]}/></div>
   {PUSH&&<div className="card"><h3>Alerts</h3>{ui.pushOn?<div className="mute" style={{marginTop:6}}>Alerts are on for this phone.</div>:<div><div className="mute" style={{margin:'6px 0 10px'}}>Get notified even when the app is closed.</div><button className="btn sm" onClick={ui.enablePush}>Turn on alerts</button></div>}</div>}
   {!ins.standalone&&(ins.can||ins.ios)&&<div className="card"><h3>Install the app</h3><div className="mute" style={{margin:'6px 0 10px'}}>{ins.can?'Add RayTECH to your home screen for quick access.':'On iPhone, tap Share, then Add to Home Screen.'}</div>{ins.can&&<button className="btn sm" onClick={ins.go}>Install app</button>}</div>}
-  <div className="card"><h3>Tell a friend</h3><div className="mute" style={{margin:'6px 0 10px'}}>Share RayTECH on WhatsApp.</div><a className="btn alt sm" style={{display:'inline-flex',gap:8,alignItems:'center',textDecoration:'none'}} href={'https://wa.me/?text='+encodeURIComponent('Book garbage pickups and track your collector live with RayTECH: '+url)} target="_blank" rel="noopener"><Ic n="share" s={16}/>Share on WhatsApp</a></div>
+  <TellFriend url={url} toast={act.toast}/>
   <button className="btn alt full" style={{display:'flex',gap:8,justifyContent:'center',alignItems:'center'}} onClick={ui.logout}><Ic n="out" s={18}/>Log out</button>
   <div className="sigp">Created by Raymond Himaambo@innovations<br/><a href="tel:+260979566905">+260979566905</a></div>
  </div>}
 
-function Earnings({list,pays}){
- const DAY=864e5,now=Date.now(),sod=new Date().setHours(0,0,0,0);
- const rows=[['Today',sod],['Last 7 days',now-7*DAY],['Last 30 days',now-30*DAY]].map(([l,t])=>{const rs=list.filter(r=>T(r)>=t),ids=new Set(rs.map(r=>String(r.id)));
-  return {l,n:rs.length,kg:rs.reduce((a,r)=>a+Number(r.kg||0),0),k:pays.filter(p=>ids.has(p.request_id)&&p.status==='confirmed').reduce((a,p)=>a+p.amount,0)}});
- return <div className="card" style={{marginBottom:12}}><b>My earnings</b>
-  {rows.map(x=><div className="row" key={x.l} style={{marginTop:8,alignItems:'center'}}><span>{x.l}</span><span className="mute">{x.n} pickup{x.n===1?'':'s'} · {x.kg} kg · K{x.k.toFixed(2)}</span></div>)}
-  <div className="mute" style={{marginTop:8}}>Dates use the day the pickup was requested. Money shows confirmed payments only.</div></div>}
-function LangBtn(){const L=window.__lang,[o,setO]=useState(false),[c,setC]=useState(L?L.get():'en');
- if(!L)return null;const cur=L.opts.find(x=>x[0]===c)||L.opts[0];
- return <span style={{position:'relative'}}><button className="ibtn" style={{width:'auto',padding:'0 10px',fontWeight:700,fontSize:12}} aria-label="Language" onClick={()=>setO(!o)}>🌐 {cur[1]}</button>
-  {o&&<div className="card" style={{position:'absolute',right:0,top:'110%',zIndex:60,padding:6,minWidth:180}}>{L.opts.map(x=><button key={x[0]} className="btn alt sm full" style={{marginBottom:4}} onClick={()=>{L.set(x[0]);setC(x[0]);setO(false)}}>{x[1]} · {x[2]}</button>)}</div>}</span>}
-function AddrInput({id,value,onType,onPick,placeholder}){
- const [list,setList]=useState([]),typed=useRef(false);
- useEffect(()=>{if(!typed.current||(value||'').trim().length<3){setList([]);return}
-  const ctl=new AbortController(),t=setTimeout(()=>{fetch('https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=zm&q='+encodeURIComponent(value.trim()),{signal:ctl.signal}).then(r=>r.json()).then(j=>setList(Array.isArray(j)?j:[])).catch(()=>{})},450);
-  return()=>{clearTimeout(t);ctl.abort()}},[value]);
- return <div style={{position:'relative'}}><input id={id} autoComplete="off" value={value} onChange={e=>{typed.current=true;onType(e.target.value)}} placeholder={placeholder}/>
-  {list.length>0&&<div className="card" style={{position:'absolute',left:0,right:0,top:'100%',zIndex:50,padding:4,maxHeight:230,overflowY:'auto'}}>{list.map(x=><button type="button" key={x.place_id} className="btn alt sm full" style={{textAlign:'left',marginBottom:3,whiteSpace:'normal',height:'auto'}} onClick={()=>{typed.current=false;setList([]);onPick(x.display_name,+x.lat,+x.lon)}}>📍 {x.display_name}</button>)}</div>}</div>}
-function printReceipt(txt){const e=t=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>');
- const w=window.open('','_blank');if(!w)return false;w.document.write('<title>RayTECH receipt</title><body style="font:16px sans-serif;max-width:460px;margin:30px auto;line-height:1.6"><h2>RayTECH Smart App</h2>'+e(txt)+'</body>');w.document.close();setTimeout(()=>{try{w.focus();w.print()}catch(x){}},400);return true}
-function Receipt({r,st,act}){
- if(r.status==='collected'){
-  const p=st.pays.find(x=>x.request_id===String(r.id)&&x.status==='confirmed');
-  if(!p)return <div className="mute" style={{marginTop:8}}>🧾 Receipt is available once your payment is confirmed.</div>;
-  const txt=`RayTECH receipt\nDate: ${new Date(T(r)).toLocaleDateString()}\nService: ${r.type}\nAddress: ${r.addr}\nWeight: ${r.kg||'-'} kg\nPaid: K${p.amount.toFixed(2)} (${p.provider}, confirmed)\nCollector: ${r.worker||'-'}`+(r.proofUrl?`\nPhoto proof: ${r.proofUrl}`:'');
-  const share=()=>{if(navigator.share)navigator.share({title:'RayTECH receipt',text:txt}).catch(()=>{});else window.open('https://wa.me/?text='+encodeURIComponent(txt),'_blank')};
-  return <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:8}}><button className="btn alt sm" onClick={share}>🧾 Share receipt</button><button className="btn alt sm" onClick={()=>{if(!printReceipt(txt))act.toast('Allow pop-ups, or open the app in Chrome, to print or save as PDF.')}}>🖨️ Print / save PDF</button></div>}
- if(r.status==='assigned'||r.status==='enroute')
-  return <button className="btn alt sm" style={{marginTop:8,color:'var(--red)'}} onClick={()=>{if(confirm('Tell the manager the collector did not come?'))act.missed(r)}}>⚠️ Collector didn’t come</button>;
- return null}
 function Client({st,act,user,ui}){
  const [tab,setTab]=useState('home');
  const days=dayOpts(),hr=new Date().getHours(),open0=WINS.findIndex(w=>parseInt(w)>hr);
- const [di,setDi]=useState(open0<0?1:0),[wi,setWi]=useState(open0<0?0:open0),[ct,setCt]=useState('');
- const slotTxt=ct?'at '+ct:WINS[wi],nowHM=()=>{const d=new Date();return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};
+ const [di,setDi]=useState(open0<0?1:0),[wi,setWi]=useState(open0<0?0:open0);
  const [f,setF]=useState({client:user.name,addr:'',type:TYPES[0],notes:'',lat:null,lng:null});
  const [q,setQ]=useState(''),[fl,setFl]=useState('all');
  const set=k=>e=>setF({...f,[k]:e.target.value});
@@ -663,9 +610,9 @@ function Client({st,act,user,ui}){
   navigator.geolocation.getCurrentPosition(p=>{const lat=p.coords.latitude,lng=p.coords.longitude;setF(x=>({...x,lat,lng,addr:x.addr.trim()?x.addr:'GPS location '+lat.toFixed(5)+', '+lng.toFixed(5)}));act.toast('Location pinned.')},()=>act.toast('Could not get your location. Allow location access or type the address.'),{enableHighAccuracy:true,timeout:15000})};
  const submit=async()=>{
   if(!f.client.trim()||!f.addr.trim())return act.toast('Enter your name and pickup address.');
-  if(ct){if(!/^\d{2}:\d{2}$/.test(ct))return act.toast('Choose your pickup time.');if(di===0&&ct<=nowHM())return act.toast('That time has passed. Choose a later slot.')}else if(di===0&&parseInt(WINS[wi])<=new Date().getHours())return act.toast('That time has passed. Choose a later slot.');
+  if(di===0&&parseInt(WINS[wi])<=new Date().getHours())return act.toast('That time has passed. Choose a later slot.');
   let ff={...f};if(ff.lat==null||ff.lng==null){try{const g=await geocode(ff.addr.trim()+', Zambia');ff.lat=g.lat;ff.lng=g.lng}catch(e){}}
-  await act.add({...ff,slot:days[di][0]+' '+slotTxt,uid:user.id});setF({...f,notes:'',lat:null,lng:null});setTab('mine')};
+  await act.add({...ff,slot:days[di][0]+' '+WINS[wi],uid:user.id});setF({...f,notes:'',lat:null,lng:null});setTab('mine')};
  const again=r=>{setF({...f,addr:r.addr,type:r.type,lat:r.lat,lng:r.lng});setTab('new');window.scrollTo({top:0,behavior:'smooth'});act.toast('Details copied. Choose a slot and send.')};
  return <>
   <div className="fade" key={tab}>
@@ -677,7 +624,7 @@ function Client({st,act,user,ui}){
    <div className="cols"><div>{next?<div className="card"><div className="row" style={{alignItems:'center'}}><b style={{fontSize:16}}>{onway?'On the way to you':'Your next pickup'}</b><span className={'pill '+next.status}>{LABEL[next.status]}</span></div>
      <div style={{display:'flex',gap:12,alignItems:'center',marginTop:12}}><span className="ico">{ICON[next.type]||'🗑️'}</span><div className="grow"><b>{next.type}</b><div className="mute">{next.addr}</div><div className="mute">{next.slot}{next.worker?' · '+next.worker:''}</div></div></div>
      <Stepper s={next.status}/><TrackMap r={next}/>
-     <JobContacts r={next}/><button className="btn alt sm" style={{marginTop:12}} onClick={()=>{setTab('mine');setFl('active')}}>View details</button></div>
+     <button className="btn alt sm" style={{marginTop:12}} onClick={()=>{setTab('mine');setFl('active')}}>View details</button></div>
     :<div className="card empty"><div style={{fontSize:34}}>🗑️</div><b style={{color:'var(--ink)'}}>No active pickups</b><div style={{marginTop:4}}>Request a collection and we will assign a collector.</div></div>}</div>
    <div><div className="act2"><button className="pri" onClick={()=>setTab('new')}><span className="ic"><Ic n="plus"/></span><span>New pickup<small>Pick a time slot</small></span></button>
     {mine[0]?<button onClick={()=>again(mine[0])}><span className="ic"><Ic n="clock"/></span><span>Repeat last<small>{mine[0].type}</small></span></button>
@@ -689,23 +636,21 @@ function Client({st,act,user,ui}){
    <div className="tiles">{TYPES.map(t=><button key={t} type="button" className={'tile'+(f.type===t?' on':'')} onClick={()=>setF({...f,type:t})}><span>{ICON[t]}</span>{t}</button>)}</div>
    <div className="sec">Where</div>
    <label htmlFor="n" style={{marginTop:0}}>Your name</label><input id="n" value={f.client} onChange={set('client')} placeholder="e.g. Grace Phiri"/>
-   <label htmlFor="a">Pickup address</label><AddrInput id="a" value={f.addr} onType={v=>setF({...f,addr:v,lat:null,lng:null})} onPick={(a,lat,lng)=>setF({...f,addr:a,lat,lng})} placeholder="Street, area, landmark"/>
+   <label htmlFor="a">Pickup address</label><input id="a" value={f.addr} onChange={set('addr')} placeholder="Street, area, landmark"/>
    {recent.length>0&&<div style={{marginTop:8}}><span className="mute">Recent</span><Chips val="" set={a=>{const x=recent.find(y=>y.addr===a);setF({...f,addr:a,lat:x.lat,lng:x.lng})}} opts={recent.map(x=>[x.addr,x.addr.length>26?x.addr.slice(0,25)+'…':x.addr])}/></div>}
    <div className="row" style={{marginTop:4,alignItems:'center'}}><button type="button" className="btn alt sm" onClick={gps}>📍 Use my GPS location</button>{f.lat!=null&&<span className="mute">Pinned {f.lat.toFixed(5)}, {f.lng.toFixed(5)} <button className="link" onClick={()=>setF({...f,lat:null,lng:null})}>Clear</button></span>}</div>
    <div className="sec">When</div>
    <Chips val={String(di)} set={v=>{const n=+v;setDi(n);if(n===0&&parseInt(WINS[wi])<=hr){const o=WINS.findIndex(w=>parseInt(w)>hr);if(o>=0)setWi(o)}}} opts={days.map((d,i)=>[String(i),d[0]])}/>
-   <div className="slots">{WINS.map((w,i)=><button key={w} type="button" className={'slot'+(!ct&&wi===i?' on':'')} disabled={di===0&&parseInt(w)<=hr} onClick={()=>{setCt('');setWi(i)}}>{w}</button>)}</div>
-   <button type="button" className={'slot'+(ct?' on':'')} style={{width:'100%',marginTop:8}} onClick={()=>setCt(ct?'':(()=>{const d=new Date(Date.now()+36e5);return di===0?String(d.getHours()).padStart(2,'0')+':00':'09:00'})())}>🕒 Choose my own time</button>
-   {ct&&<div style={{marginTop:8}}><label htmlFor="ctm">Pickup time</label><input id="ctm" type="time" value={ct} min={di===0?nowHM():undefined} onChange={e=>setCt(e.target.value)}/></div>}
+   <div className="slots">{WINS.map((w,i)=><button key={w} type="button" className={'slot'+(wi===i?' on':'')} disabled={di===0&&parseInt(w)<=hr} onClick={()=>setWi(i)}>{w}</button>)}</div>
    <label htmlFor="o">Notes for the crew</label><textarea id="o" rows="2" value={f.notes} onChange={set('notes')} placeholder="Where to find the waste, gate colour, etc."/>
-   <div className="sum"><Ic n="clock" s={18}/><span>{f.type} · {days[di][0]}, {ct?ct:WINS[wi]}</span></div>
+   <div className="sum"><Ic n="clock" s={18}/><span>{f.type} · {days[di][0]}, {WINS[wi]}</span></div>
    <button className="btn full" onClick={submit}>Request pickup</button></div>}
   {tab==='mine'&&<div>
    <Search v={q} set={v=>{setQ(v);pg.reset()}} ph="Search address, type or collector"/>
    <Chips val={fl} set={v=>{setFl(v);pg.reset()}} opts={[['all','All',mine.length],['active','Active',act1.length],['done','Completed',dn.length]]}/>
    {fl==='done'&&dn.length>0&&<div style={{margin:'0 0 12px'}}><button className="btn alt sm" style={{color:'var(--red)'}} onClick={()=>act.hide(dn.map(r=>r.id))}>🗑 Delete all completed ({dn.length})</button></div>}
    {list.length===0&&<div className="card empty">{mine.length?'No pickups match your search.':'No pickups yet. Tap New pickup to get started.'}</div>}
-   <div className="list2">{pg.items.map(r=><PCard key={r.id} r={r} open={r.status==='collected'&&!st.pays.some(p=>p.request_id===String(r.id)&&p.status!=='rejected')}><PayBox r={r} st={st} act={act}/><Rate r={r} act={act}/><Receipt r={r} st={st} act={act}/>
+   <div className="list2">{pg.items.map(r=><PCard key={r.id} r={r} open={r.status==='collected'&&!st.pays.some(p=>p.request_id===String(r.id)&&p.status!=='rejected')}><PayBox r={r} st={st} act={act}/><Rate r={r} act={act}/>
      <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:12}}>{r.status==='collected'&&<button className="btn alt sm" onClick={()=>again(r)}>🔁 Request again</button>}{r.status==='collected'&&<button className="btn alt sm" style={{color:'var(--red)'}} onClick={()=>act.hide([r.id])}>🗑 Delete</button>}{r.status!=='collected'&&<button className="btn alt sm" style={{color:'var(--red)'}} onClick={()=>act.cancel(r)}>✖ Cancel pickup</button>}<a className="btn alt sm" style={{textDecoration:'none',display:'inline-flex',gap:6,alignItems:'center'}} href={waLink(r)} target="_blank" rel="noopener"><Ic n="share" s={15}/>Share</a></div></PCard>)}</div>
    {pg.pager}</div>}
   {tab==='me'&&<Profile user={user} ui={ui}/>}
@@ -735,7 +680,6 @@ const [here,setHere]=useState(null),[near,setNear]=useState(false);
  const dd=r=>here&&r.lat!=null?dist(here.lat,here.lng,r.lat,r.lng):null;
  const jobs=[...mine].sort((a,b)=>{const ea=a.status==='enroute',eb=b.status==='enroute';if(ea!==eb)return ea?-1:1;if(near){const x=dd(a),y=dd(b);return (x==null?1e12:x)-(y==null?1e12:y)}return 0});
  const mp=usePaged(jobs,4,'jobs'),dp=usePaged(done,6,'completed');
- useEffect(()=>{if(mine.length>1&&navigator.geolocation&&!here)navigator.geolocation.getCurrentPosition(p=>{setHere({lat:p.coords.latitude,lng:p.coords.longitude});setNear(true)},()=>{},{enableHighAccuracy:true,timeout:10000,maximumAge:60000})},[mine.length>1]);
  const totalKg=doneAll.reduce((a,r)=>a+Number(r.kg||0),0);
  const locate=()=>{if(near)return setNear(false);if(!navigator.geolocation)return act.toast('GPS is not available on this device.');act.toast('Finding your location…');
   navigator.geolocation.getCurrentPosition(p=>{setHere({lat:p.coords.latitude,lng:p.coords.longitude});setNear(true)},()=>act.toast('Allow location access to sort by distance.'),{enableHighAccuracy:true,timeout:12000})};
@@ -745,8 +689,7 @@ const [here,setHere]=useState(null),[near,setNear]=useState(false);
    <div className="hero2"><div className="hi">{greet()}, {(who||'').split(' ')[0]}</div><div className="sub">{mine.length?mine.length+' job'+(mine.length>1?'s':'')+' to collect':'No jobs right now'}</div>
     <div className="hs">{[['To collect',mine.length],['Completed',doneAll.length],['Kg collected',totalKg]].map(([l,v])=><div key={l}><b>{v}</b><span>{l}</span></div>)}</div></div>
    <div className="card" style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,marginBottom:10}}><div><b>{avail?'🟢 Available for pickups':'⚪ Offline'}</b><div className="mute">{avail?'Sharing your location so nearby jobs reach you. Keep the app open.':'Go available to receive nearby pickups.'}</div></div><button className={'btn sm '+(avail?'alt':'')} onClick={toggleAvail}>{avail?'Go offline':'Go available'}</button></div>
-   {gpsBad&&<div className="card" style={{marginBottom:10}}><b>📍 My area{manLoc?': '+manLoc.name:''}</b><div className="mute">GPS is not available on this connection. Enter where you are so the nearest jobs reach you, and update it when you move.</div><div className="row" style={{gap:8,marginTop:8}}><AddrInput value={locQ} onType={setLocQ} onPick={a=>setLocQ(a.split(',').slice(0,2).join(','))} placeholder="Area, street or landmark"/><button className="btn sm" onClick={saveManual}>Set</button></div></div>}
-   {doneAll.some(r=>r.queued)&&<div className="alertb">⏳ {doneAll.filter(r=>r.queued).length} pickup(s) saved on this phone. They upload automatically when signal returns. Keep the app installed.</div>}
+   {gpsBad&&<div className="card" style={{marginBottom:10}}><b>📍 My area{manLoc?': '+manLoc.name:''}</b><div className="mute">GPS is not available on this connection. Enter where you are so the nearest jobs reach you, and update it when you move.</div><div className="row" style={{gap:8,marginTop:8}}><input value={locQ} onChange={e=>setLocQ(e.target.value)} placeholder="Area, street or landmark"/><button className="btn sm" onClick={saveManual}>Set</button></div></div>}
    {PENDING.size>0&&<div className="alertb" role="alert">🔔 New pickup nearby. Accept it below to stop the alarm.</div>}
    {offers.map(r=><div className="card trip" key={'o'+r.id}><div className="row" style={{alignItems:'center'}}><div style={{display:'flex',gap:12,alignItems:'center'}}><span className="ico">{ICON[r.type]||'🗑️'}</span><div><b style={{fontSize:16}}>New pickup offer</b><div className="mute">{r.type}</div><Person id={r.uid} name={r.client} role="client"/></div></div><span className="pill assigned">Offered</span></div>
     <div style={{marginTop:12,display:'grid',gap:4}}><div style={{display:'flex',gap:8}}><Ic n="pin" s={18}/><span>{r.addr}</span></div><div className="mute" style={{display:'flex',gap:8,alignItems:'center'}}><Ic n="clock" s={18}/>{r.slot}</div></div>
@@ -760,7 +703,6 @@ const [here,setHere]=useState(null),[near,setNear]=useState(false);
     {r.notes&&<div className="codebox">“{r.notes}”</div>}
     {d!=null&&<div style={{marginTop:8}}><span className="chip2">{fmt(d)} away</span></div>}
     <Track s={r.status}/>
-    <JobContacts r={r}/>
     <Nav r={r}/>{r.status==='enroute'&&<Live r={r} act={act}/>}
     {r.status==='assigned'&&PENDING.has(r.id)&&<button className="btn warn full" onClick={()=>act.accept(r.id)}>Accept job (stop alarm)</button>}
     {r.status==='assigned'&&<button className="btn full" onClick={()=>{window.VOICE_OK=speak('Starting trip.');markAccepted(r.id);stopAlarm(r.id);act.accepted(r.id);act.move(r.id,'enroute')}}>Start trip and share GPS</button>}
@@ -776,7 +718,6 @@ const [here,setHere]=useState(null),[near,setNear]=useState(false);
    {mp.pager}
   </div>}
   {tab==='done'&&<div>
-   <Earnings list={doneAll} pays={st.pays}/>
    <div className="grid two"><div className="card stat"><b>{doneAll.length}</b><span className="mute">Pickups completed</span></div><div className="card stat"><b>{totalKg} kg</b><span className="mute">Total collected</span></div></div>
    {done.length>0&&<div style={{margin:'0 0 12px'}}><button className="btn alt sm" style={{color:'var(--red)'}} onClick={()=>act.hide(done.map(r=>r.id))}>🗑 Delete all completed ({done.length})</button></div>}
    {done.length===0&&<div className="card empty">Completed pickups will appear here.</div>}
@@ -845,9 +786,9 @@ function ClientRow({u,reqs}){
  const [o,setO]=useState(false);
  const act1=reqs.filter(r=>r.status!=='collected').length,kg=reqs.reduce((a,r)=>a+Number(r.kg||0),0);
  return <div className="card pc"><button className="pc-h" onClick={()=>setO(!o)} aria-expanded={o}><span className="av">{ini(u.name)}</span>
-  <span className="grow"><b>{u.name}</b><span className="mute" style={{display:'block'}}>{u.email}{u.phone?' · '+showPhone(u.phone):''}{u.nrc?' · NRC '+u.nrc:''}</span></span>
+  <span className="grow"><b>{u.name}</b><span className="mute" style={{display:'block'}}>{u.email}{u.nrc?' · NRC '+u.nrc:''}</span></span>
   <span className="mute" style={{textAlign:'right'}}>{reqs.length} pickups{act1>0&&<b style={{color:'var(--amber)'}}> · {act1} open</b>}<span style={{display:'block'}}>{kg} kg</span></span><span className="chev">{o?'▲':'▼'}</span></button>
-  {o&&<div className="pc-b"><Contact phone={u.phone} name={u.name} msg={'Hello '+first(u.name)+', this is RayTECH.'} label={u.phone?'📱 '+showPhone(u.phone):''}/>{reqs.length===0&&<div className="mute">No pickups yet.</div>}{reqs.map(r=><div className="note" key={r.id}><span>{ICON[r.type]||'🗑️'}</span><div style={{flex:1}}><b>{r.type}</b><div className="mute">{r.addr} · {ago(T(r))}</div></div><span className={'pill '+r.status}>{SHORT[r.status]}</span></div>)}</div>}</div>}
+  {o&&<div className="pc-b">{reqs.length===0&&<div className="mute">No pickups yet.</div>}{reqs.map(r=><div className="note" key={r.id}><span>{ICON[r.type]||'🗑️'}</span><div style={{flex:1}}><b>{r.type}</b><div className="mute">{r.addr} · {ago(T(r))}</div></div><span className={'pill '+r.status}>{SHORT[r.status]}</span></div>)}</div>}</div>}
 
 const fK=v=>'K'+Number(v||0).toLocaleString();
 const isHid=(r,id)=>(r.hidden_by||[]).includes(id);
@@ -955,7 +896,7 @@ function Manager({st,act,users,me}){
   {tab==='team'&&<div className="card"><h2 style={{marginBottom:4}}>Team</h2><div className="mute" style={{marginBottom:10}}>People choose Client or Collector when they register. Only you can promote someone to Manager (or change a role) (managers have the same powers as you), or block anyone who should not have access.</div>
    <Search v={q} set={v=>{setQ(v);tp.reset()}} ph="Search people"/>
    <Chips val={rf} set={v=>{setRf(v);tp.reset()}} opts={[['all','All',users.length],...Object.entries(ROLE).map(([k,l])=>[k,l+'s',users.filter(u=>u.role===k).length]),['blocked','🚫 Blocked',users.filter(u=>u.blocked).length]]}/>
-   {tp.items.map(u=>{const mine1=u.id===me;return <div className="note" key={u.id} style={{alignItems:'center',flexWrap:'wrap',opacity:u.blocked?.65:1}}><Av u={u}/><div style={{flex:1,minWidth:150}}><b>{u.name}</b>{mine1&&<span className="pill" style={{marginLeft:6}}>You</span>}{u.blocked&&<span className="pill" style={{marginLeft:6,background:'#FBD9CE',color:'#7A2410'}}>Blocked</span>}<div className="mute">{u.email}{u.phone?' · '+showPhone(u.phone):''}</div>{u.phone&&<Contact phone={u.phone} name={u.name} msg={'Hello '+first(u.name)+', this is RayTECH.'}/>}</div>
+   {tp.items.map(u=>{const mine1=u.id===me;return <div className="note" key={u.id} style={{alignItems:'center',flexWrap:'wrap',opacity:u.blocked?.65:1}}><Av u={u}/><div style={{flex:1,minWidth:150}}><b>{u.name}</b>{mine1&&<span className="pill" style={{marginLeft:6}}>You</span>}{u.blocked&&<span className="pill" style={{marginLeft:6,background:'#FBD9CE',color:'#7A2410'}}>Blocked</span>}<div className="mute">{u.email}</div></div>
     <select aria-label={'Role for '+u.name} style={{width:130}} disabled={mine1} value={u.role} onChange={e=>act.setRole(u.id,e.target.value)}>{Object.entries(ROLE).map(([k,l])=><option key={k} value={k}>{l}</option>)}</select>
     {!mine1&&<button className="btn alt sm" style={u.blocked?{}:{color:'var(--red)'}} onClick={()=>{if(u.blocked||confirm('Block '+u.name+'?\n\nThey will be signed out and cannot use the app until you unblock them.'))act.block(u.id,!u.blocked)}}>{u.blocked?'✅ Unblock':'🚫 Block'}</button>}</div>})}
    {tp.pager}</div>}
@@ -977,17 +918,12 @@ const errTxt=e=>{const m=((e&&e.message)||'').toLowerCase();
  if(m.includes('rate limit')||m.includes('too many'))return 'Too many attempts. Try again later.';
  if(m.includes('fetch')||m.includes('network'))return 'No internet connection.';
  return 'Something went wrong. Try again.'};
-const QIDS=new Map();
-const qdb=()=>new Promise((res,rej)=>{const o=indexedDB.open('rt_queue',1);o.onupgradeneeded=()=>o.result.createObjectStore('q',{keyPath:'id'});o.onsuccess=()=>res(o.result);o.onerror=()=>rej(o.error)});
-const qput=async v=>{const d=await qdb();return new Promise((res,rej)=>{const t=d.transaction('q','readwrite');t.objectStore('q').put(v);t.oncomplete=()=>res();t.onerror=()=>rej(t.error)})};
-const qall=async()=>{const d=await qdb();return new Promise((res,rej)=>{const q=d.transaction('q').objectStore('q').getAll();q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)})};
-const qdel=async id=>{const d=await qdb();return new Promise((res,rej)=>{const t=d.transaction('q','readwrite');t.objectStore('q').delete(id);t.oncomplete=()=>res();t.onerror=()=>rej(t.error)})};
-const toReq=r=>{const b={...r,workerId:r.worker_id,proofUrl:r.proof_url,created:+new Date(r.created)},q=QIDS.get(r.id);return q?{...b,status:'collected',kg:q.kg,queued:true}:b};
+const toReq=r=>({...r,workerId:r.worker_id,proofUrl:r.proof_url,created:+new Date(r.created)});
 const toNote=x=>({id:x.id,text:x.text,read:x.is_read,time:new Date(x.created).toLocaleString([], {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})});
 
 function Auth({msg,setMsg}){
  const [mode,setMode]=useState('login');
- const [f,setF]=useState(()=>{let e='';try{e=localStorage.getItem('rt_last_email')||''}catch(x){}return {name:'',phone:'',nrc:'',email:e,pw:'',pw2:'',role:'client'}});const [pic,setPic]=useState(null);
+ const [f,setF]=useState(()=>{let e='';try{e=localStorage.getItem('rt_last_email')||''}catch(x){}return {name:'',nrc:'',email:e,pw:'',pw2:'',role:'client'}});const [pic,setPic]=useState(null);
  const [rem,setRem]=useState(rememberOn());
  const set=k=>e=>setF({...f,[k]:e.target.value});
  const em=f.email.trim().toLowerCase();
@@ -998,21 +934,20 @@ function Auth({msg,setMsg}){
   try{if(rem&&window.PasswordCredential&&navigator.credentials)await navigator.credentials.store(new PasswordCredential({id:em,password:f.pw,name:em}))}catch(e){}};
  const register=async()=>{
   if(!f.name.trim())return setMsg('Enter your full name.');
-  const ph=normPhone(f.phone);if(!ph)return setMsg('Enter a valid phone number like 0971234567.');
   if(!NRC_RE.test(f.nrc))return setMsg('Enter your NRC like 123456/10/1.');
   if(!em)return setMsg('Enter your email.');
   if(f.pw.length<6)return setMsg('Password must be at least 6 characters.');
   if(f.pw!==f.pw2)return setMsg('Passwords do not match.');
   {const {data:free,error:ne}=await sb.rpc('nrc_available',{p_nrc:f.nrc});if(!ne&&free===false)return setMsg('This NRC is already registered. Log in instead, or contact RayTECH.')}
   try{localStorage.setItem('rt_remember','1');localStorage.setItem('rt_last_email',em)}catch(e){}
-  const {data,error}=await sb.auth.signUp({email:em,password:f.pw,options:{data:{name:f.name.trim(),phone:ph,nrc:f.nrc,requested_role:f.role==='worker'?'worker':'client'}}});
+  const {data,error}=await sb.auth.signUp({email:em,password:f.pw,options:{data:{name:f.name.trim(),nrc:f.nrc,requested_role:f.role==='worker'?'worker':'client'}}});
   if(!error&&pic)window.PENDING_AVATAR=pic;
   if(error)return setMsg(errTxt(error));
   try{if(window.PasswordCredential&&navigator.credentials)await navigator.credentials.store(new PasswordCredential({id:em,password:f.pw,name:f.name.trim()}))}catch(e){}
   if(!data.session){go('login');setMsg('Account created. Check your email to confirm, then log in.')}};
  const forgot=async()=>{if(!em)return setMsg('Enter your account email.');const {error}=await sb.auth.resetPasswordForEmail(em,{redirectTo:location.href.split('#')[0]});setMsg(error?errTxt(error):'Reset link sent. Check your inbox and spam folder.')};
  const field=(id,label,k,type='text',ph='')=><div><label htmlFor={id}>{label}</label><input id={id} name={type==='password'?(mode==='login'?'password':'new-password'):type==='email'?'username':k} type={type} value={f[k]} onChange={set(k)} placeholder={ph} autoComplete={type==='password'?(mode==='login'?'current-password':'new-password'):type==='email'?'username':k==='name'?'name':'off'}/></div>;
- return <div className="wrap"><div className="auth"><div style={{textAlign:'right',paddingTop:8}}><LangBtn/></div>
+ return <div className="wrap"><div className="auth">
   <div className="brand" style={{margin:'32px 0 18px'}}>{LOGO}{BRAND}</div>
   <div style={{textAlign:'center',marginBottom:20}}><img src="data:image/png;base64,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" alt="Put litter in the bin" width="96" height="96" style={{display:'block',margin:'0 auto 12px',borderRadius:'50%'}}/><h1 style={{fontSize:28}}>Welcome to Smart Garbage Collection</h1></div>
   <div className="pitch"><h1>Cleaner streets, one pickup at a time.</h1><div className="pf"><span><Ic n="pin" s={16}/>Live tracking with ETA</span><span><Ic n="clock" s={16}/>Choose your time slot</span><span><Ic n="check" s={16}/>Photo proof of every pickup</span></div></div>
@@ -1022,7 +957,6 @@ function Auth({msg,setMsg}){
     <button className="btn full" type="submit">Log in</button>
     <div className="row" style={{marginTop:8}}><button type="button" className="link" onClick={()=>go('forgot')}>Forgot password?</button><button type="button" className="link" onClick={()=>go('register')}>Create account</button></div></form>}
    {mode==='register'&&<form onSubmit={e=>{e.preventDefault();register()}}><div><label>I am registering as</label><Chips val={f.role} set={v=>setF({...f,role:v})} opts={[['client','Client'],['worker','Collector']]}/><div className="mute" style={{marginTop:4}}>{f.role==='worker'?'Collect garbage and earn per pickup.':'Request garbage pickups.'}</div></div>{field('n','Full name','name')}
-    <div><label htmlFor="ph">Phone number</label><input id="ph" name="phone" type="tel" inputMode="tel" autoComplete="tel" value={f.phone} onChange={e=>setF({...f,phone:e.target.value})} placeholder="0971234567"/><div className="mute" style={{marginTop:4}}>Used for calls and WhatsApp between you, your {f.role==='worker'?'customers':'collector'} and RayTECH. Use a number that has WhatsApp.</div></div>
     <div><label htmlFor="nrc">NRC number</label><input id="nrc" name="nrc" inputMode="numeric" autoComplete="off" value={f.nrc} onChange={e=>setF({...f,nrc:fmtNRC(e.target.value)})} placeholder="123456/10/1" maxLength={11}/><div className="mute" style={{marginTop:4}}>Your NRC becomes your permanent ID. It is linked to your name and email and cannot be changed or used on another account.</div></div>
     {field('e','Email','email','email')}{field('p','Password','pw','password','At least 6 characters')}{field('p2','Confirm password','pw2','password')}
     <div><label htmlFor="rpic">Profile picture (optional)</label><div style={{display:'flex',gap:10,alignItems:'center'}}>{pic&&<Thumb file={pic}/>}<input id="rpic" type="file" accept="image/*" onChange={e=>setPic(e.target.files[0]||null)}/></div></div>
@@ -1046,18 +980,6 @@ function NewPass({msg,setMsg,done}){
    <button className="btn full" onClick={save}>Save password</button></div></div>{msg&&<div className="toast" role="status">{msg}</div>}</div>
 }
 
-function CompleteProfile({user,ui}){
- const [ph,setPh]=useState(user.phone?showPhone(user.phone):''),[nrc,setNrc]=useState(user.nrc||''),[busy,setBusy]=useState(false);
- const needPh=!normPhone(user.phone),needNrc=!NRC_RE.test(user.nrc||'');
- const go=async()=>{if(needPh&&!normPhone(ph))return ui.toast('Enter a valid phone number like 0971234567.');if(needNrc&&!NRC_RE.test(nrc))return ui.toast('Enter your NRC like 123456/10/1.');
-  setBusy(true);try{if(needPh)await ui.savePhone(ph);if(needNrc)await ui.saveNrc(nrc)}finally{setBusy(false)}};
- return <div className="wrap"><div className="auth"><div style={{textAlign:'right',paddingTop:8}}><LangBtn/></div>
-  <div className="brand" style={{margin:'24px 0 18px'}}>{LOGO}{BRAND}</div>
-  <h2>Complete your profile</h2><div className="mute" style={{margin:'6px 0 14px'}}>A phone number (with WhatsApp) and your NRC are required to use RayTECH.</div>
-  {needPh&&<div><label htmlFor="cp-ph">Phone number</label><input id="cp-ph" type="tel" inputMode="tel" autoComplete="tel" value={ph} onChange={e=>setPh(e.target.value)} placeholder="0971234567"/></div>}
-  {needNrc&&<div><label htmlFor="cp-nrc">NRC number</label><input id="cp-nrc" inputMode="numeric" autoComplete="off" value={nrc} onChange={e=>setNrc(fmtNRC(e.target.value))} placeholder="123456/10/1" maxLength={11}/><div className="mute" style={{marginTop:4}}>Add your NRC once. After saving it cannot be changed.</div></div>}
-  <button className="btn full" style={{marginTop:14}} disabled={busy} onClick={go}>Save and continue</button>
-  <button type="button" className="link" style={{marginTop:10}} onClick={ui.logout}>Log out</button></div></div>}
 function Setup(){return <div className="wrap"><div className="auth"><div className="brand" style={{margin:'32px 0 18px'}}>{LOGO}{BRAND}</div>
  <div className="card"><h2>Connect Supabase</h2><p>Open this file in a text editor, find <b>SUPABASE_URL</b> near the top of the script, and paste your Supabase project URL and public (anon) key. Add your OneSignal App ID too. See README.md.</p></div></div></div>}
 
@@ -1076,8 +998,7 @@ function App(){
  const link=reqs.map(r=>r.id+':'+(r.worker_id||'')).join(',');
  useEffect(()=>{if(!configured||!user)return;
   if(user.role==='manager'){const m={};users.forEach(u=>{m[u.id]=u});setPeople(m);return}
-  let live=true;sb.rpc('my_people').then(({data})=>{if(!live||!data)return;const m={};data.forEach(x=>{m[x.id]=x});setPeople(m);
-   sb.rpc('my_contacts').then(({data:c})=>{if(!live||!c)return;setPeople(p=>{const q={...p};c.forEach(x=>{q[x.id]={...(q[x.id]||{id:x.id}),phone:x.phone}});return q})},()=>{})},()=>{});
+  let live=true;sb.rpc('my_people').then(({data})=>{if(!live||!data)return;const m={};data.forEach(x=>{m[x.id]=x});setPeople(m)},()=>{});
   return()=>{live=false}},[user&&user.id,user&&user.role,users,link]);
  const st={reqs,notes,pays};
  const merge=row=>setReqs(p=>[toReq(row),...p.filter(x=>x.id!==row.id)].sort((a,b)=>b.created-a.created));
@@ -1092,7 +1013,6 @@ function App(){
   (async()=>{for(let i=0;i<5;i++){const {data}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();if(off)return;if(data){if(data.blocked){setMsg('Your account has been blocked. Contact RayTECH.');sb.auth.signOut();return}let d=data;try{const rq=session.user.user_metadata&&session.user.user_metadata.requested_role;
    if(rq==='worker'&&d.role==='client'&&d.role_claimed===false){const {error:ce}=await sb.rpc('claim_signup_role');if(!ce)d={...d,role:'worker',role_claimed:true}}
    if(window.PENDING_AVATAR){const f=window.PENDING_AVATAR;window.PENDING_AVATAR=null;const path=d.id+'.jpg';const up=await sb.storage.from('avatars').upload(path,await sq(f),{contentType:'image/jpeg',upsert:true});if(!up.error){const url=sb.storage.from('avatars').getPublicUrl(path).data.publicUrl+'?t='+Date.now();const {error:ae}=await sb.rpc('set_my_avatar',{p_url:url});if(!ae)d={...d,avatar_url:url}}}}catch(e){}
-   try{const mp=normPhone(session.user.user_metadata&&session.user.user_metadata.phone);if(mp&&!normPhone(d.phone)){await sb.rpc('set_my_phone',{p_phone:mp});d={...d,phone:mp}}}catch(e){}
    if(off)return;setUser(d);return}await new Promise(r=>setTimeout(r,500))}
    setMsg('Account profile not found. Ask your manager for help.');sb.auth.signOut()})();
   return()=>{off=true}},[uid,session===undefined]);
@@ -1138,19 +1058,9 @@ function App(){
  const logout=async()=>{if(PUSH)OneSignalDeferred.push(OS=>OS.logout());await sb.auth.signOut()};
  const note=text=>{MYNOTES.add(text);sb.from('notifications').insert({text}).then(()=>{})};
  const fail=()=>setMsg('Something went wrong. Check your connection and try again.');
- const flushing=useRef(false);
- const flushQ=async()=>{if(flushing.current||navigator.onLine===false)return;flushing.current=true;let n=0;
-  try{for(const v of await qall()){try{let extra={};
-    if(v.photo){const path=v.id+'.jpg';const up=await sb.storage.from('proofs').upload(path,v.photo,{contentType:'image/jpeg',upsert:true});if(up.error)throw up.error;extra={proof_url:sb.storage.from('proofs').getPublicUrl(path).data.publicUrl+'?t='+Date.now()}}
-    const {data,error}=await sb.from('requests').update({status:'collected',kg:Number(v.kg),...extra}).eq('id',v.id).select().single();if(error)throw error;
-    await qdel(v.id);QIDS.delete(v.id);merge(data);n++;note(`${v.worker} collected ${v.kg} kg of ${String(v.type).toLowerCase()} waste at ${v.addr}.`)}catch(e){break}}}catch(e){}
-  flushing.current=false;if(n)setMsg(n+' saved pickup'+(n>1?'s':'')+' uploaded. Manager notified.')};
- useEffect(()=>{qall().then(a=>{if(a.length){a.forEach(v=>QIDS.set(v.id,v));setReqs(p=>p.map(x=>QIDS.has(x.id)?toReq(x):x))}flushQ()}).catch(()=>{});const f=()=>flushQ();window.addEventListener('online',f);const t=setInterval(f,30000);return()=>{window.removeEventListener('online',f);clearInterval(t)}},[]);
  const act={
   toast:setMsg,
-  missed:r=>{note('⚠️ '+r.client+' says the collector did not come for '+r.addr+(r.worker?' (assigned to '+r.worker+')':'')+'.');setMsg('The manager has been told. Thank you for your patience.')},
   rate:(r,n)=>{try{const m=getRated();m[r.id]=n;localStorage.setItem('rated_jobs',JSON.stringify(m))}catch(e){}note(`${r.client} rated ${r.worker} ${n}/5 for the pickup at ${r.addr}.`);setMsg('Thanks for your feedback.')},
-  near:(r,m)=>{try{const k='near_w_'+r.id;if(localStorage.getItem(k))return;localStorage.setItem(k,'1')}catch(e){}note(`${r.worker||'Collector'} is about ${m} min from ${r.addr}.`)},
   del:async ids=>{ids=[].concat(ids);let gone=[];
    for(let i=0;i<ids.length;i+=40){const part=ids.slice(i,i+40);
     const {data,error}=await sb.from('requests').delete().in('id',part).select('id');
@@ -1188,16 +1098,13 @@ function App(){
   assign:async(id,name)=>{const w=users.find(u=>u.role==='worker'&&!u.blocked&&u.name===name);const r=reqs.find(x=>x.id===id);
    const {data,error}=await sb.from('requests').update({worker:w?w.name:null,worker_id:w?w.id:null,status:w?'assigned':'requested'}).eq('id',id).select().single();
    if(error)return fail();merge(data);if(w)note(`${w.name} assigned to ${r.addr}.`)},
-  move:async(id,status,kg,photo)=>{const r=reqs.find(x=>x.id===id);
-   const queue=async()=>{try{const blob=photo?await shrink(photo):null;const v={id,kg:Number(kg),photo:blob,worker:r.worker,type:r.type,addr:r.addr,ts:Date.now()};await qput(v);QIDS.set(id,v);setReqs(p=>p.map(x=>x.id===id?toReq(x):x));setMsg('No signal. Pickup saved on this phone and will upload automatically.')}catch(e){fail()}};
-   if(status==='collected'&&navigator.onLine===false)return queue();
-   try{
+  move:async(id,status,kg,photo)=>{const r=reqs.find(x=>x.id===id);try{
    let extra={};
    if(photo){const path=id+'.jpg';const up=await sb.storage.from('proofs').upload(path,await shrink(photo),{contentType:'image/jpeg',upsert:true});if(up.error)throw up.error;extra={proof_url:sb.storage.from('proofs').getPublicUrl(path).data.publicUrl+'?t='+Date.now()}}
    const {data,error}=await sb.from('requests').update({status,...(kg?{kg:Number(kg)}:{}),...extra}).eq('id',id).select().single();
    if(error)throw error;merge(data);
    note(status==='collected'?`${r.worker} collected ${kg} kg of ${r.type.toLowerCase()} waste at ${r.addr}.`:`${r.worker} is on the way to ${r.addr}.`);
-   setMsg(status==='collected'?'Collected. Manager notified.':'Trip started. Client can now track you.')}catch(e){if(status==='collected'&&(navigator.onLine===false||/fetch|network|load failed/i.test(String(e&&e.message))))return queue();fail()}},
+   setMsg(status==='collected'?'Collected. Manager notified.':'Trip started. Client can now track you.')}catch(e){fail()}},
   pos:(id,lat,lng)=>{const t=Date.now();if(t-lastPos<4000)return;lastPos=t;sb.from('requests').update({pos:{lat,lng,t}}).eq('id',id).then(()=>{})},
   read:()=>{setNotes(n=>n.map(x=>({...x,read:true})));sb.from('notifications').update({is_read:true}).eq('is_read',false).then(()=>{})},
   pay:async(r,d)=>{const {data,error}=await sb.from('payments').insert({request_id:String(r.id),client:r.client,amount:Number(d.amount),provider:d.provider,phone:d.phone,ref:d.ref}).select().single();
@@ -1223,20 +1130,14 @@ function App(){
   const {error}=await sb.rpc('set_my_nrc',{p_nrc:v});
   if(error)return setMsg(((error.message||'').toLowerCase().includes('already'))?'This NRC is already registered to another account.':'Could not save NRC. Run nrc.sql in Supabase once.');
   setUser(u=>({...u,nrc:v}));setMsg('NRC saved and locked to your account.')};
- const savePhone=async v=>{const n=normPhone(v);if(!n)return setMsg('Enter a valid phone number like 0971234567.');
-  const {error}=await sb.rpc('set_my_phone',{p_phone:n});
-  if(error)return setMsg('Could not save the number. Run phone-contact.sql in Supabase once.');
-  setUser(u=>({...u,phone:n}));setMsg('Phone number saved.')};
- const ui={pushOn,enablePush,logout,setAvatar,saveNrc,savePhone,toast:setMsg};
- if(!normPhone(user.phone)||!NRC_RE.test(user.nrc||''))return <><CompleteProfile user={user} ui={ui}/>{msg&&<div className="toast" role="status">{msg}</div>}</>;
- return <PeopleCtx.Provider value={{people,open:setSheet,me:user.id,meName:user.name,role:user.role}}><div className="wrap">
+ const ui={pushOn,enablePush,logout,setAvatar,saveNrc};
+ return <PeopleCtx.Provider value={{people,open:setSheet}}><div className="wrap">
   {!online&&<div className="offline" role="alert">You are offline. Reconnect to send updates.</div>}
   <header><div className="brand">{LOGO}{BRAND}</div>
-   <div className="hr"><LangBtn/><button className="ibtn" aria-label="Switch light or dark theme" onClick={()=>setTheme(dark?'light':'dark')}><Ic n={dark?'sun':'moon'} s={18}/></button>
+   <div className="hr"><button className="ibtn" aria-label="Switch light or dark theme" onClick={()=>setTheme(dark?'light':'dark')}><Ic n={dark?'sun':'moon'} s={18}/></button>
     {user.role==='manager'?<div style={{textAlign:'right'}}><div className="mute">{user.name} · {ROLE[user.role]}</div><button className="btn alt sm" onClick={logout}>Log out</button></div>:<Av u={user} cls="sm"/>}</div></header>
   {PUSH&&!pushOn&&<div className="card row" style={{alignItems:'center'}}><span>Get alerts on this phone, even when the app is closed.</span><button className="btn sm" onClick={enablePush}>Turn on alerts</button></div>}
   {user.role==='manager'&&unread>0&&<div className="card" role="status"><b>{unread} new notification{unread>1?'s':''}</b></div>}
-  {!normPhone(user.phone)&&<div className="card" role="status"><b>Add your phone number</b><div className="mute" style={{margin:'4px 0 10px'}}>So your {user.role==='worker'?'customers':user.role==='manager'?'team and clients':'collector'} can call or WhatsApp you, and you can call or WhatsApp them.</div><PhoneEdit user={user} ui={ui}/></div>}
   {user.role==='client'&&<Client st={st} act={act} user={user} ui={ui}/>}
   {user.role==='worker'&&<Worker st={st} act={act} user={user} ui={ui}/>}
   {user.role==='manager'&&<Manager st={st} act={act} users={users} me={user.id}/>}
@@ -1245,36 +1146,6 @@ function App(){
  </div></PeopleCtx.Provider>
 }
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
-</script>
-<script>
-/* ===== Language option: Chichewa/Nyanja complete, Bemba and Tonga waiting for native-speaker translations =====
-   L = screen text (English -> language). Use {} for a changing part. Anything missing shows in English. */
-(function(){
-var L={"ny": {"no phone number available yet": "palibe nambala ya foni panobe", "🕒 Choose my own time": "🕒 Sankhani nthawi yanga", "Pickup time": "Nthawi yotengera", "Choose your pickup time.": "Sankhani nthawi yotengera.", "Complete your profile": "Malizitsani mbiri yanu", "A phone number (with WhatsApp) and your NRC are required to use RayTECH.": "Nambala ya foni (yokhala ndi WhatsApp) ndi NRC yanu zimafunika kuti mugwiritse ntchito RayTECH.", "Save and continue": "Sungani ndi kupitiriza", "No signal. Pickup saved on this phone and will upload automatically.": "Palibe intaneti. Pempho lasungidwa pa foni ndipo lidzatumizidwa lokha.", "pickup(s) saved on this phone. They upload automatically when signal returns. Keep the app installed.": "zopempha zasungidwa pa foni. Zidzatumizidwa zokha intaneti ikabwerera. Siyani pulogalamu itayikidwa.", "{} saved pickup uploaded. Manager notified.": "Pempho lasungidwa {} latumizidwa. Woyang’anira wauzidwa.", "{} saved pickups uploaded. Manager notified.": "Zopempha zasungidwa {} zatumizidwa. Woyang’anira wauzidwa.", "New pickup nearby. Please accept the job.": "Pali ntchito yatsopano pafupi. Chonde landirani.", "Requested": "Yapemphedwa", "Assigned": "Yaperekedwa", "On the way": "Ali mnjira", "Collected": "Yatengedwa", "Household": "Zapakhomo", "Recyclables": "Zobwezeretsanso", "Garden waste": "Zinyalala za m’munda", "Bulky items": "Zinthu zazikulu", "Commercial": "Zamalonda", "Navigate in Maps": "Pitani ndi Mapu", "Voice is not supported in this browser. Showing written directions only.": "Mawu sagwira ntchito pa browser iyi. Mukuwona malangizo olembedwa okha.", "Could not find this address on the map. Use \"Navigate in Maps\" instead.": "Adilesi iyi sinapezeke pa mapu. Gwiritsani ntchito \"Pitani ndi Mapu\".", "GPS signal is weak. Move to open sky to confirm arrival.": "Chizindikiro cha GPS ndi chofooka. Pitani poonekera kumwamba kuti titsimikizire kufika.", "You have arrived": "Mwafika", "Could not get directions. Check your internet connection. Retrying…": "Malangizo sanapezeke. Onani intaneti yanu. Tikuyesanso…", "🔊 Start voice directions": "🔊 Yambani malangizo a mawu", "Getting your route…": "Tikufufuza njira yanu…", "🔁 Repeat": "🔁 Bwerezani", "🔇 Stop voice": "🔇 Imitsani mawu", "Open in Chrome for voice": "Tsegulani mu Chrome kuti mumve mawu", "GPS is not available on this device.": "GPS palibe pa foni iyi.", "Allow location access so the client and manager can track you.": "Lolani kupeza malo anu kuti kasitomala ndi woyang’anira akutsatireni.", "Sharing live GPS": "Tikugawana GPS yamoyo", "⚠️ Weak GPS signal (±": "⚠️ Chizindikiro cha GPS ndi chofooka (±", "m). Step outside or away from buildings. Arrival is only confirmed when accuracy is under 50 m.": "m). Tulukani panja kapena kutali ndi nyumba. Kufika kumatsimikizika pokhapokha kulondola kuli pansi pa 50 m.", "🚛 Your collector is about": "🚛 Wotolera wanu ali pafupifupi", "min away. Please have your waste ready.": "mphindi kutali. Chonde konzani zinyalala zanu.", "min": "mphindi", "km": "km", "Live position": "Malo amoyo", "Updating…": "Tikusintha…", "Recenter": "Bwezerani pakati", "Waiting for the collector's GPS signal…": "Tikudikira GPS ya wotolera…", "Pickup": "Malo otengera", "Collector": "Wotolera", "updated": "yasinthidwa", "View on map": "Onani pa mapu", "Photo proof of collection": "Chithunzi chotsimikizira kutenga", "Done": "Zatheka", "Clear search": "Fufutani kufufuza", "Showing": "Zikuonetsa", "of": "pa", "← Prev": "← M’mbuyo", "Page": "Tsamba", "Next": "Kenako", "Per page": "Pa tsamba", "/page": "/tsamba", "· requested": "· yapemphedwa", "Pickups requested in the last 7 days": "Zopempha zomwe zachitika masiku 7 apitawa", "Starter": "Woyamba", "Green Partner": "Mnzathu Wobiriwira", "Eco Champion": "Wopambana wa Chilengedwe", "Community Hero": "Ngwazi ya Mudzi", "Today": "Lero", "Tomorrow": "Mawa", "Good morning": "Mwadzuka bwanji", "Good afternoon": "Mwasenda bwanji", "Good evening": "Muli bwanji madzulo", "Call": "Imbani", "📞 Call": "📞 Imbani", "💬 WhatsApp": "💬 WhatsApp", "✉️ SMS": "✉️ SMS", "I am on my way": "Ndili mnjira", "has not added a phone number yet.": "sanawonjezere nambala ya foni.", "Phone number": "Nambala ya foni", "Enter a number like 0971234567 or +260971234567.": "Lowetsani nambala monga 0971234567 kapena +260971234567.", "Use a number that has WhatsApp.": "Gwiritsani nambala yomwe ili ndi WhatsApp.", "Save number": "Sungani nambala", "Photo to upload": "Chithunzi choti mutumize", "Rate": "Perekani mlingo", "You rated": "Munapereka mlingo", "Manager": "Woyang’anira", "Close": "Tsekani", "Change picture": "Sinthani chithunzi", "Add profile picture": "Onjezani chithunzi cha pa mbiri", "Remove": "Chotsani", "Identity": "Chizindikiritso", "Name:": "Dzina:", "Email:": "Imelo:", "NRC:": "NRC:", "Locked": "Yatsekedwa", "Add your NRC once. After saving it cannot be changed.": "Onjezani NRC yanu kamodzi. Mukasunga singasinthidwe.", "NRC number": "Nambala ya NRC", "Save NRC": "Sungani NRC", "Appearance": "Maonekedwe", "Match your phone, or choose a theme.": "Tsatirani foni yanu, kapena sankhani mtundu.", "Auto": "Zokha", "Light": "Kuwala", "Dark": "Mdima", "Alerts": "Zidziwitso", "Alerts are on for this phone.": "Zidziwitso zayatsidwa pa foni iyi.", "Get notified even when the app is closed.": "Landirani zidziwitso ngakhale pulogalamu yatsekedwa.", "Turn on alerts": "Yatsani zidziwitso", "Install the app": "Ikani pulogalamu", "Add RayTECH to your home screen for quick access.": "Onjezani RayTECH pa sikirini yanu yoyamba kuti mulowe mwachangu.", "On iPhone, tap Share, then Add to Home Screen.": "Pa iPhone, dinani Share, kenako Add to Home Screen.", "Install app": "Ikani pulogalamu", "Tell a friend": "Uzani mnzanu", "Share RayTECH on WhatsApp.": "Gawanani RayTECH pa WhatsApp.", "Share on WhatsApp": "Gawanani pa WhatsApp", "Log out": "Tulukani", "Last 7 days": "Masiku 7 apitawa", "Last 30 days": "Masiku 30 apitawa", "My earnings": "Ndalama zanga", "kg · K": "kg · K", "Dates use the day the pickup was requested. Money shows confirmed payments only.": "Masiku amatengedwa kuchokera tsiku lopempha. Ndalama zikuonetsa malipiro otsimikizika okha.", "Language": "Chilankhulo", "🧾 Receipt is available once your payment is confirmed.": "🧾 Risiti idzapezeka malipiro anu akatsimikizidwa.", "🧾 Share receipt": "🧾 Gawanani risiti", "Allow pop-ups, or open the app in Chrome, to print or save as PDF.": "Lolani ma pop-up, kapena tsegulani mu Chrome kuti musindikize kapena kusunga ngati PDF.", "🖨️ Print / save PDF": "🖨️ Sindikizani / sungani PDF", "Tell the manager the collector did not come?": "Uzeni woyang’anira kuti wotolera sanabwere?", "⚠️ Collector didn’t come": "⚠️ Wotolera sanabwere", "GPS is not available on this device. Type the address instead.": "GPS palibe pa foni iyi. Lembani adilesi m’malo mwake.", "Finding your location…": "Tikupeza malo anu…", "GPS location": "Malo a GPS", "Location pinned.": "Malo alembedwa.", "Could not get your location. Allow location access or type the address.": "Malo anu sanapezeke. Lolani kupeza malo kapena lembani adilesi.", "Enter your name and pickup address.": "Lowetsani dzina lanu ndi adilesi yotengerako.", "That time has passed. Choose a later slot.": "Nthawi imeneyo yapita. Sankhani nthawi ina yotsatira.", "Details copied. Choose a slot and send.": "Zalembedwa. Sankhani nthawi ndipo tumizani.", "Your collector is on the way.": "Wotolera wanu ali mnjira.", "Your pickup is being arranged.": "Tikukonza kutenga zinyalala zanu.", "Ready when you are.": "Takonzeka mukakonzeka.", "Active": "Zikuchitika", "Completed": "Zatha", "Kg collected": "Ma kg otengedwa", "Top level reached": "Mwafika pamwamba", "On the way to you": "Ali mnjira kubwera kwa inu", "Your next pickup": "Kutenga kwanu kotsatira", "View details": "Onani zambiri", "No active pickups": "Palibe zopempha zikuchitika", "Request a collection and we will assign a collector.": "Pemphani kutengedwa ndipo tidzakupatsani wotolera.", "New pickup": "Pempho latsopano", "Pick a time slot": "Sankhani nthawi", "Repeat last": "Bwerezani lomaliza", "My pickups": "Zopempha zanga", "total": "zonse", "Request a pickup": "Pemphani kutengedwa kwa zinyalala", "Tell us what and where. A collector is assigned shortly.": "Tiuzeni chiyani ndi kuti kuti. Wotolera adzaperekedwa posachedwa.", "What are we collecting?": "Tikutenga chiyani?", "Where": "Kuti", "Your name": "Dzina lanu", "Pickup address": "Adilesi yotengerako", "Street, area, landmark": "Msewu, dera, chizindikiro", "Recent": "Zaposachedwa", "📍 Use my GPS location": "📍 Gwiritsani ntchito malo anga a GPS", "Pinned": "Walembedwa", "Clear": "Fufutani", "When": "Liti", "Notes for the crew": "Uthenga kwa ogwira ntchito", "Where to find the waste, gate colour, etc.": "Kumene kuli zinyalala, mtundu wa chipata, ndi zina.", "Request pickup": "Pemphani kutengedwa", "Search address, type or collector": "Fufuzani adilesi, mtundu kapena wotolera", "🗑 Delete all completed (": "🗑 Fufutani zonse zatha (", "No pickups match your search.": "Palibe zopempha zofanana ndi kufufuza kwanu.", "No pickups yet. Tap New pickup to get started.": "Palibe zopempha. Dinani Pempho latsopano kuti muyambe.", "🔁 Request again": "🔁 Pemphaninso", "🗑 Delete": "🗑 Fufutani", "✖ Cancel pickup": "✖ Siyani kutenga", "Share": "Gawanani", "Home": "Kunyumba", "Request": "Pempho", "Pickups": "Zopempha", "Profile": "Mbiri", "Location set to {}.": "Malo akhazikitsidwa ku {}.", "Could not find that place. Try a nearby area or landmark.": "Malowo sanapezeke. Yesani dera kapena chizindikiro chapafupi.", "GPS is blocked on this address. Type your area below so jobs near you can reach you.": "GPS yatsekedwa pa adilesi iyi. Lembani dera lanu pansipa kuti ntchito zapafupi zikufikireni.", "You are offline. No new pickups will be offered.": "Simunali pa intaneti. Palibe ntchito zatsopano zidzaperekedwa.", "You are available. Nearby pickups will ring here.": "Muli okonzeka. Ntchito zapafupi zidzalira pano.", "Allow location access to sort by distance.": "Lolani kupeza malo kuti zisanjidwe motsata mtunda.", "No jobs right now": "Palibe ntchito pakali pano", "To collect": "Zoti titenge", "Sharing your location so nearby jobs reach you. Keep the app open.": "Tikugawana malo anu kuti ntchito zapafupi zikufikireni. Siyani pulogalamu yotsegula.", "Go available to receive nearby pickups.": "Khalani okonzeka kulandira ntchito zapafupi.", "Go offline": "Zimitsani", "Go available": "Khalani okonzeka", "📍 My area": "📍 Dera langa", "GPS is not available on this connection. Enter where you are so the nearest jobs reach you, and update it when you move.": "GPS palibe pa intaneti iyi. Lowetsani kumene muli kuti ntchito zapafupi zikufikireni, ndipo musinthe mukasuntha.", "Area, street or landmark": "Dera, msewu kapena chizindikiro", "Set": "Khazikitsani", "🔔 New pickup nearby. Accept it below to stop the alarm.": "🔔 Pali ntchito yatsopano pafupi. Landirani pansipa kuti alamu iyime.", "New pickup offer": "Ntchito yatsopano yaperekedwa", "Offered": "Yaperekedwa", "away": "kutali", "Accept pickup": "Landirani ntchito", "Skip": "Dumphani", "Order of jobs": "Dongosolo la ntchito", "Nearest first": "Zapafupi poyamba", "No jobs assigned yet": "Palibe ntchito zoperekedwa", "New assignments ring and vibrate this phone.": "Ntchito zatsopano zimalira ndi kunjenjemera pa foni iyi.", "Accept job (stop alarm)": "Landirani ntchito (imitsani alamu)", "Starting trip.": "Tikuyamba ulendo.", "Start trip and share GPS": "Yambani ulendo ndi kugawana GPS", "Complete this pickup": "Malizani kutengaku", "Weight collected (kg)": "Kulemera kotengedwa (kg)", "Or type the weight": "Kapena lembani kulemera", "Photo proof": "Chithunzi chotsimikizira", "Photo ready. Tap to retake.": "Chithunzi chakonzeka. Dinani kuti mujambulenso.", "Take a photo of the collected waste": "Jambulani chithunzi cha zinyalala zotengedwa", "Enter the weight before confirming.": "Lowetsani kulemera musanatsimikizire.", "Take a photo of the collected waste first.": "Jambulani chithunzi cha zinyalala poyamba.", "Confirm collected": "Tsimikizani zatengedwa", "Pickups completed": "Zopempha zomwe zatha", "kg": "kg", "Total collected": "Zonse zotengedwa", "Completed pickups will appear here.": "Zopempha zomwe zatha zidzaoneka pano.", "Jobs": "Ntchito", "Sort into two bins": "Isankhuleni m’madengu awiri", "Keep wet waste (food scraps, peels) apart from dry waste (paper, plastic, cans, glass). Clean, dry recyclables stay fresh and are easier to reuse.": "Siyanitsani zinyalala zonyowa (zotsala za chakudya, makungwa) ndi zouma (mapepala, pulasitiki, zitini, galasi). Zobwezeretsanso zoyera ndi zouma zimakhala bwino ndipo zimagwiritsidwanso ntchito mosavuta.", "Rinse before you bin": "Sambani musanataye", "A quick rinse of bottles and tins stops smells and pests. You do not need to scrub, just remove the leftovers.": "Kusambitsa mabotolo ndi zitini mwachangu kumaletsa fungo ndi tizilombo. Simufunika kusisita, chotsani zotsalira zokha.", "Turn scraps into compost": "Sandutsani zotsalira kukhala manyowa", "Vegetable peels, leaves and garden cuttings can become rich soil for your plants instead of rubbish. Keep them separate from plastic.": "Makungwa a ndiwo, masamba ndi zodulidwa za m’munda zingakhale dothi labwino la mbewu zanu m’malo mwa zinyalala. Zisungeni zosiyana ndi pulasitiki.", "Protect your hands": "Tetezani manja anu", "Wear gloves when handling rubbish, and always wash hands with soap and clean water afterwards, even if they look clean.": "Valani magolovesi mukagwira zinyalala, ndipo nthawi zonse sambani manja ndi sopo ndi madzi aukhondo pambuyo pake, ngakhale akuoneka oyera.", "Wrap broken glass": "Manikani galasi losweka", "Wrap broken glass in thick paper or cardboard and write “GLASS” on it, so collectors are never cut by a hidden shard.": "Manikani galasi losweka m’pepala lokhuthala kapena katoni ndipo lembani “GALASI”, kuti wotolera asadulidwe ndi chidutswa chobisika.", "Keep batteries and paint separate": "Siyanitsani mabatire ndi penti", "Batteries, paint, chemicals and bulbs can be harmful. Never mix them with normal rubbish. Ask RayTECH or your council where to take them.": "Mabatire, penti, mankhwala ndi mababu zingakhale zoopsa. Musazisakanize ndi zinyalala zabwinobwino. Funsani RayTECH kapena khonsolo kumene mungazitengere.", "Never burn plastic": "Musawotche pulasitiki", "Burning plastic and rubber gives off thick, harmful smoke that is bad for your lungs and your neighbours. Let us collect it instead.": "Kuwotcha pulasitiki ndi mphira kumatulutsa utsi wochuluka woopsa womwe ndi woipa kwa mapapo anu ndi anansi anu. Tilolezeni kuti tizitenge.", "Keep lids closed": "Siyani zivindikiro zotsekedwa", "A closed bin keeps out flies, rats and bad smells. Tie bags tightly and do not overfill them, so they do not split.": "Dengu lotsekedwa limaletsa ntchentche, makoswe ndi fungo loipa. Manga matumba mwamphamvu ndipo musawadzaze kwambiri kuti asaphulike.", "Keep drains clear": "Siyani ngalande zotseguka", "Rubbish dumped near drains blocks them and causes flooding and standing water where mosquitoes breed. Use your bin, or book a pickup.": "Zinyalala zotayidwa pafupi ndi ngalande zimaziletsa ndi kuyambitsa kusefukira ndi madzi oima komwe udzudzu umaswana. Gwiritsani dengu lanu, kapena pemphani kutengedwa.", "Put waste out on time": "Tulutsani zinyalala pa nthawi", "Have your bags ready at the pickup point in your chosen time slot. This stops waste sitting around and attracting pests.": "Konzani matumba anu pamalo otengerako pa nthawi yomwe mwasankha. Izi zimaletsa zinyalala kukhala pansi ndi kukopa tizilombo.", "Metal that keeps on giving": "Chitsulo chomwe chimapitiriza kupatsa", "Recycling aluminium cans uses far less energy than making new ones, and the metal can be recycled again and again.": "Kubwezeretsanso zitini za aluminiyamu kumagwiritsa ntchito mphamvu zochepa kuposa kupanga zatsopano, ndipo chitsulocho chimabwezeretsedwanso mobwerezabwereza.", "Glass is endlessly recyclable": "Galasi limabwezeretsedwanso mosatha", "Glass can be recycled many times without losing quality. A jar you recycle today could become a new bottle.": "Galasi lingabwezeretsedwenso kambirimbiri popanda kutaya ubwino. Chitini chomwe mubwezeretsanso lero chingakhale botolo latsopano.", "Plastic lasts a very long time": "Pulasitiki amakhala nthawi yaitali kwambiri", "Plastic does not rot away like food. It can stay in the environment for hundreds of years, so reuse bags and bottles where you can.": "Pulasitiki sawola ngati chakudya. Amatha kukhala m’chilengedwe zaka mazana ambiri, choncho gwiritsaninso matumba ndi mabotolo mukatha.", "What is the safest way to throw away broken glass?": "Njira yotetezeka yotayira galasi losweka ndi iti?", "Put it loose in the bag": "Liikeni lokha m’thumba", "Wrap it in thick paper and label it": "Manikani m’pepala lokhuthala ndi kulilemba", "Burn it": "Liwotcheni", "Wrapping and labelling it protects the collectors’ hands.": "Kulimanikira ndi kulilemba kumateteza manja a otolera.", "Which gives off the most harmful smoke when burned?": "Chiti chimatulutsa utsi woopsa kwambiri chikawotchedwa?", "Plastic": "Pulasitiki", "Dry leaves": "Masamba ouma", "Cardboard": "Katoni", "Burning plastic releases harmful smoke. Hand it to a collector instead.": "Kuwotcha pulasitiki kumatulutsa utsi woopsa. Pereka kwa wotolera m’malo mwake.", "Food scraps and garden waste are best turned into…": "Zotsala za chakudya ndi zinyalala za m’munda ndi bwino kuzisandutsa…", "Compost": "Manyowa", "Glass": "Galasi", "Compost feeds your soil and keeps wet waste out of your rubbish.": "Manyowa amadyetsa dothi lanu ndi kuchotsa zinyalala zonyowa mu zinyalala zanu.", "Why should bin lids stay closed?": "Chifukwa chiyani zivindikiro za dengu zizikhala zotsekedwa?", "To make the bin heavier": "Kuti dengu likhale lolemera", "To keep out flies, rats and smells": "Kuletsa ntchentche, makoswe ndi fungo", "No reason": "Palibe chifukwa", "A closed lid protects your home from pests and bad smells.": "Chivindikiro chotsekedwa chimateteza nyumba yanu ku tizilombo ndi fungo loipa.", "What should you do after touching rubbish?": "Muyenera kuchita chiyani mutagwira zinyalala?", "Wipe hands on clothes": "Pukuta manja pa zovala", "Wash with soap and clean water": "Sambani ndi sopo ndi madzi aukhondo", "Nothing": "Palibe", "Soap and clean water remove germs, even from gloved hands.": "Sopo ndi madzi aukhondo zimachotsa majeremusi, ngakhale m’manja okhala ndi magolovesi.", "Where do old batteries and paint belong?": "Mabatire akale ndi penti zimapita kuti?", "In the normal bin": "M’dengu labwinobwino", "Down the drain": "M’ngalande", "Kept separate, handed to a proper drop-off": "Zosungidwa zosiyana, kuperekedwa pamalo oyenera", "They can be harmful, so they must be kept apart from normal rubbish.": "Zingakhale zoopsa, choncho ziyenera kusungidwa zosiyana ndi zinyalala zabwinobwino.", "Waste Champion": "Wopambana wa Zinyalala", "Green Hero": "Ngwazi Yobiriwira", "Eco Starter": "Woyamba wa Chilengedwe", "Eco learning corner": "Ngodya yophunzirira za chilengedwe", "🌍 Eco Learning Corner": "🌍 Ngodya Yophunzirira za Chilengedwe", "Small habits make cleaner streets. Pick up a tip, then test yourself and earn a badge!": "Zizolowezi zazing’ono zimapanga misewu yoyera. Tengani langizo, kenako dziyeseni ndi kupeza baji!", "💡 Tips": "💡 Malangizo", "🎯 Quick quiz": "🎯 Mafunso ofulumira", "← Back": "← Bwererani", "Tip": "Langizo", "Next tip →": "Langizo lina →", "Question": "Funso", "Score": "Zotsatira", "Not quite.": "Sizolondola.", "See my result": "Onani zotsatira zanga", "Next question →": "Funso lotsatira →", "You scored": "Mwapeza", "out of": "pa", "Play again": "Sewerani kachiwiri", "pickups": "zopempha", "open": "zotseguka", "Hello": "Moni", "No pickups yet.": "Palibe zopempha.", "Type the amount you paid.": "Lembani ndalama zomwe mwalipira.", "Enter the mobile money number you paid from.": "Lowetsani nambala ya mobile money yomwe mwalipira.", "Enter the transaction ID from your payment message.": "Lowetsani nambala ya transaction kuchokera mu uthenga wa malipiro.", "✅ Paid": "✅ Walipira", "sent. Waiting for confirmation.": "yatumizidwa. Tikudikira kutsimikizika.", "Your last payment was rejected. Check the details and try again.": "Malipiro anu omaliza anakanidwa. Onani zomwe mwalemba ndipo yesaninso.", "📱 Pay with mobile money": "📱 Lipirani ndi mobile money", "Pay by mobile money": "Lipirani ndi mobile money", "Send money to": "Tumizani ndalama ku", "on": "pa", ", then enter the details below.": ", kenako lowetsani zambiri pansipa.", "Amount you paid (ZMW)": "Ndalama zomwe mwalipira (ZMW)", "Type the amount, e.g. 75": "Lembani ndalama, mwachitsanzo 75", "Your mobile money number": "Nambala yanu ya mobile money", "Transaction ID": "Nambala ya transaction", "From the confirmation SMS": "Kuchokera mu SMS yotsimikizira", "I have paid": "Ndalipira", "Cancel": "Siyani", "Date": "Tsiku", "Client": "Kasitomala", "Amount (ZMW)": "Ndalama (ZMW)", "Provider": "Kampani", "Phone": "Foni", "This month": "Mwezi uno", "All time": "Nthawi zonse", "Pending": "Zikudikira", "Confirm payments": "Tsimikizani malipiro", "· ID": "· Nambala", "Confirm": "Tsimikizani", "Reject": "Kanani", "Daily": "Tsiku ndi tsiku", "Monthly": "Mwezi ndi mwezi", "⬇ Export CSV": "⬇ Tengani CSV", "Daily sales · last 14 days": "Zogulitsa za tsiku ndi tsiku · masiku 14 apitawa", "Monthly sales · last 12 months": "Zogulitsa za mwezi ndi mwezi · miyezi 12 yapitayi", "Month": "Mwezi", "Payments": "Malipiro", "Sales": "Zogulitsa", "By mobile money": "Ndi mobile money", "No confirmed payments yet.": "Palibe malipiro otsimikizika.", "No completed pickups to delete.": "Palibe zopempha zomwe zatha zoti zifufutidwe.", "Delete": "Fufutani", "Address": "Adilesi", "Type": "Mtundu", "Slot": "Nthawi", "Status": "Mkhalidwe", "Total": "Zonse", "Open": "Tsegulani", "By waste type": "Malinga ndi mtundu wa zinyalala", "Needs a collector": "Ikufuna wotolera", "Find collector now": "Pezani wotolera tsopano", "See all": "Onani zonse", "🚛 Live tracking": "🚛 Kutsatira mwachindunji", "heading to": "ikupita ku", "🔔 Notifications": "🔔 Zidziwitso", "Mark all read": "Onetsani zonse zawerengedwa", "Nothing yet.": "Palibe kanthu.", "Search client, address or collector": "Fufuzani kasitomala, adilesi kapena wotolera", "Sort": "Sanjani", "Newest first": "Zatsopano poyamba", "Oldest first": "Zakale poyamba", "🧹 Clean up old jobs": "🧹 Chotsani ntchito zakale", "Remove finished pickups to keep the list short. Sales records stay.": "Chotsani zopempha zomwe zatha kuti mndandanda ukhale waufupi. Zolemba za zogulitsa zimatsala.", "Delete completed pickups older than": "Fufutani zopempha zomwe zatha zakale kuposa", "All completed": "Zonse zomwe zatha", "Older than 7 days": "Zakale kuposa masiku 7", "Older than 30 days": "Zakale kuposa masiku 30", "Older than 90 days": "Zakale kuposa masiku 90", "🗑️ Delete": "🗑️ Fufutani", "No pickups match.": "Palibe zopempha zofanana.", "Collector (auto-assigned)": "Wotolera (wosankhidwa zokha)", "Searching for the nearest collector…": "Tikufufuza wotolera wapafupi…", "🗑️ Delete this pickup": "🗑️ Fufutani pempho ili", "Search clients by name or email": "Fufuzani makasitomala ndi dzina kapena imelo", "client": "kasitomala", "Sort clients": "Sanjani makasitomala", "Name A–Z": "Dzina A–Z", "Most pickups": "Zopempha zambiri", "No clients found.": "Palibe makasitomala opezeka.", "Team": "Gulu", "Search people": "Fufuzani anthu", "You": "Inu", "Blocked": "Oletsedwa", "Role for": "Udindo wa", "Block": "Letsani", "RayTECH Smart App": "RayTECH Smart App", "Garbage Collector": "Wotolera Zinyalala", "This NRC is already registered to another account.": "NRC iyi yalembetsedwa kale ku akaunti ina.", "Email or password is incorrect.": "Imelo kapena chinsinsi sizolondola.", "An account with this email already exists. Log in instead.": "Akaunti ya imelo iyi ilipo kale. Lowani m’malo mwake.", "Confirm your email first, then log in.": "Tsimikizani imelo yanu poyamba, kenako lowani.", "Password must be at least 6 characters.": "Chinsinsi chiyenera kukhala ndi zilembo zosachepera 6.", "Too many attempts. Try again later.": "Mwayesa kwambiri. Yesaninso pambuyo pake.", "No internet connection.": "Palibe intaneti.", "Something went wrong. Try again.": "Pali cholakwika. Yesaninso.", "Enter your email and password.": "Lowetsani imelo ndi chinsinsi chanu.", "Enter your full name.": "Lowetsani dzina lanu lonse.", "Enter a valid phone number like 0971234567.": "Lowetsani nambala yolondola ya foni monga 0971234567.", "Enter your NRC like 123456/10/1.": "Lowetsani NRC yanu monga 123456/10/1.", "Enter your email.": "Lowetsani imelo yanu.", "Passwords do not match.": "Machinsinsi sakufanana.", "This NRC is already registered. Log in instead, or contact RayTECH.": "NRC iyi yalembetsedwa kale. Lowani m’malo mwake, kapena funsani RayTECH.", "Account created. Check your email to confirm, then log in.": "Akaunti yapangidwa. Onani imelo yanu kuti mutsimikizire, kenako lowani.", "Enter your account email.": "Lowetsani imelo ya akaunti yanu.", "Reset link sent. Check your inbox and spam folder.": "Ulalo wasinthidwe watumizidwa. Onani inbox ndi spam folder yanu.", "Put litter in the bin": "Ikani zinyalala m’dengu", "Welcome to Smart Garbage Collection": "Takulandirani ku Smart Garbage Collection", "Cleaner streets, one pickup at a time.": "Misewu yoyera, pempho limodzi panthawi.", "Live tracking with ETA": "Kutsatira mwachindunji ndi nthawi yofika", "Choose your time slot": "Sankhani nthawi yanu", "Photo proof of every pickup": "Chithunzi chotsimikizira pa pempho lililonse", "Log in": "Lowani", "Create account": "Tsegulani akaunti", "Reset password": "Sinthani chinsinsi", "Email": "Imelo", "Password": "Chinsinsi", "Remember me on this device": "Ndikumbukireni pa chipangizo ichi", "Forgot password?": "Mwaiwala chinsinsi?", "I am registering as": "Ndikulembetsa ngati", "Collect garbage and earn per pickup.": "Tolani zinyalala ndi kupeza ndalama pa pempho lililonse.", "Request garbage pickups.": "Pemphani kutengedwa kwa zinyalala.", "Full name": "Dzina lonse", "At least 6 characters": "Zilembo zosachepera 6", "Confirm password": "Tsimikizani chinsinsi", "Profile picture (optional)": "Chithunzi cha pa mbiri (mwasankha)", "Managers: register as a client or collector, then ask an existing RayTECH manager to promote you.": "Oyang’anira: lembetsani ngati kasitomala kapena wotolera, kenako pemphani woyang’anira wa RayTECH kuti akukwezeni.", "Back to log in": "Bwererani ku kulowa", "Account email": "Imelo ya akaunti", "Email me a reset link": "Tumizeni ulalo wosinthira pa imelo", "Password updated.": "Chinsinsi chasinthidwa.", "Choose a new password": "Sankhani chinsinsi chatsopano", "New password": "Chinsinsi chatsopano", "Confirm new password": "Tsimikizani chinsinsi chatsopano", "Save password": "Sungani chinsinsi", "Your account has been blocked. Contact RayTECH.": "Akaunti yanu yatsekedwa. Funsani RayTECH.", "Account profile not found. Ask your manager for help.": "Mbiri ya akaunti sinapezeke. Funsani woyang’anira kuti akuthandizeni.", "Could not load pickups. Check your connection.": "Zopempha sizinatsegulidwe. Onani intaneti yanu.", "Alerts turned on for this phone.": "Zidziwitso zayatsidwa pa foni iyi.", "Alerts are blocked. Allow notifications in your browser settings.": "Zidziwitso zatsekedwa. Lolani zidziwitso mu zokonda za browser yanu.", "Something went wrong. Check your connection and try again.": "Pali cholakwika. Onani intaneti yanu ndipo yesaninso.", "The manager has been told. Thank you for your patience.": "Woyang’anira wauzidwa. Zikomo chifukwa cha kuleza mtima.", "Thanks for your feedback.": "Zikomo chifukwa cha maganizo anu.", "Could not delete. Check your connection and try again.": "Sizinafufutidwe. Onani intaneti yanu ndipo yesaninso.", "Pickup deleted.": "Pempho lafufutidwa.", "Nothing was deleted. Only completed pickups can be deleted.": "Palibe chafufutidwa. Zopempha zomwe zatha zokha ndizomwe zingafufutidwe.", "The collector is already on the way.": "Wotolera ali kale mnjira.", "Pickup cancelled.": "Pempho lasiyidwa.", "Sorry, another collector accepted this pickup first.": "Pepani, wotolera wina walandira ntchito iyi poyamba.", "Job accepted. Manager notified.": "Ntchito yalandiridwa. Woyang’anira wauzidwa.", "Skipped. It goes to the next collector.": "Yadumphidwa. Ipita kwa wotolera wotsatira.", "Pickup requested. We will assign a collector soon.": "Pempho latumizidwa. Tikupatsani wotolera posachedwa.", "Assigned to the nearest collector.": "Yaperekedwa kwa wotolera wapafupi.", "No eligible collector nearby right now. It will keep retrying.": "Palibe wotolera woyenera pafupi pakali pano. Tipitiriza kuyesa.", "Collected. Manager notified.": "Yatengedwa. Woyang’anira wauzidwa.", "Trip started. Client can now track you.": "Ulendo wayamba. Kasitomala tsopano angakutsatireni.", "Payment failed: {}": "Malipiro alephera: {}", "Payment sent. We will confirm it shortly.": "Malipiro atumizidwa. Tidzatsimikizira posachedwa.", "Payment confirmed.": "Malipiro atsimikizidwa.", "Payment rejected.": "Malipiro akanidwa.", "Role updated.": "Udindo wasinthidwa.", "User blocked.": "Wogwiritsa waletsedwa.", "User unblocked.": "Woletsedwa wachotsedwa.", "Loading…": "Tikutsegula…", "Choose an image file.": "Sankhani chithunzi.", "Profile picture updated.": "Chithunzi cha pa mbiri chasinthidwa.", "Profile picture removed.": "Chithunzi cha pa mbiri chachotsedwa.", "NRC saved and locked to your account.": "NRC yasungidwa ndi kutsekedwa ku akaunti yanu.", "Phone number saved.": "Nambala ya foni yasungidwa.", "You are offline. Reconnect to send updates.": "Simuli pa intaneti. Lumikizaninso kuti mutumize zosintha.", "Switch light or dark theme": "Sinthani kuwala kapena mdima", "Get alerts on this phone, even when the app is closed.": "Landirani zidziwitso pa foni iyi, ngakhale pulogalamu yatsekedwa.", "new notification": "chidziwitso chatsopano", "Add your phone number": "Onjezani nambala yanu ya foni"}, "bem": {"Log in": "Ingileni", "Log out": "Fumeni"}, "toi": {"Log in": "Njilani", "Log out": "Zwanini"}};
-var V={ny:[['You have arrived at your destination','Mwafika pamene mukupita'],['GPS signal is weak','Chizindikiro cha GPS ndi chofooka'],['Voice directions on','Malangizo a mawu ayatsidwa'],['Route found','Njira yapezeka'],['Rerouting','Tikusintha njira'],['Turn slightly left','Tembenukirani pang\u2019ono kumanzere'],['Turn slightly right','Tembenukirani pang\u2019ono kumanja'],['Turn left','Tembenukirani kumanzere'],['Turn right','Tembenukirani kumanja'],['Continue straight','Pitirizani molunjika'],[' kilometres',' makilomita'],[' metres',' mita'],[' minutes',' mphindi'],[' now',' tsopano'],['In ','Pakatha ']]};
-var CODE={ny:'ny',bem:'bem',toi:'toi'};
-var cur='en';try{cur=localStorage.getItem('rt_lang')||'en'}catch(e){}
-var PAT={};function pats(c){if(PAT[c])return PAT[c];var r=[];Object.keys(L[c]||{}).forEach(function(k){if(k.indexOf('{}')>-1){var q=k.replace(/[.*+?^$()|[\]\\]/g,'\\$&').split('{}').join('(.+)');r.push([new RegExp('^'+q+'$'),L[c][k]])}});return PAT[c]=r}
-function look(k){var d=L[cur];if(!d)return null;if(d[k])return d[k];var r=pats(cur);for(var i=0;i<r.length;i++){var m=k.match(r[i][0]);if(m){var o=r[i][1],n=1;return o.replace(/\{\}/g,function(){return m[n++]})}}return null}
-var seen=new WeakMap();
-function tx(n){var v=n.nodeValue,m=seen.get(n);if(m&&v===m.out)return;var k=v.trim(),t=(cur!=='en'&&k)?look(k):null,out=t?v.replace(k,t):v;seen.set(n,{src:v,out:out});if(out!==v)n.nodeValue=out}
-function restore(n){var m=seen.get(n);if(m&&n.nodeValue===m.out){n.nodeValue=m.src;seen.delete(n)}}
-var ATT=['placeholder','aria-label','title'],aseen=new WeakMap();
-function txA(el){if(!el.getAttribute)return;ATT.forEach(function(a){var v=el.getAttribute(a);if(v==null)return;var key=a,m=aseen.get(el)||{};aseen.set(el,m);var mm=m[key];if(mm&&v===mm.out)return;var t=(cur!=='en')?look(v.trim()):null,out=t||v;m[key]={src:v,out:out};if(out!==v)el.setAttribute(a,out)})}
-function restA(el){var m=aseen.get(el);if(!m)return;ATT.forEach(function(a){var mm=m[a];if(mm&&el.getAttribute(a)===mm.out)el.setAttribute(a,mm.src)});aseen.delete(el)}
-function walk(root,f,fa){var w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),n;while(n=w.nextNode())f(n);if(root.querySelectorAll)root.querySelectorAll('[placeholder],[aria-label],[title]').forEach(fa);if(root.getAttribute)fa(root)}
-function apply(){if(cur==='en')walk(document.body,restore,restA);else walk(document.body,tx,txA)}
-var busy=false;new MutationObserver(function(ms){if(cur==='en'||busy)return;busy=true;
- ms.forEach(function(m){if(m.type==='characterData')tx(m.target);else if(m.type==='attributes')txA(m.target);else m.addedNodes.forEach(function(a){if(a.nodeType===3)tx(a);else if(a.nodeType===1)walk(a,tx,txA)})});busy=false
-}).observe(document.documentElement,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:ATT});
-function vt(t){var r=V[cur];if(!r)return t;t=String(t);r.forEach(function(p){t=t.split(p[0]).join(p[1])});return t}
-if(window.speechSynthesis){var sp=SpeechSynthesis.prototype.speak;SpeechSynthesis.prototype.speak=function(u){try{if(V[cur]){u.text=vt(u.text);u.lang=CODE[cur]}}catch(e){}return sp.call(this,u)}}
-function hookAndroid(){var a=window.AndroidTTS;if(a&&a.speak&&!a.__l){var o=a.speak.bind(a);a.speak=function(t){return o(vt(t))};a.__l=1}}
-hookAndroid();setTimeout(hookAndroid,1500);
-var oc=window.confirm;window.confirm=function(t){var x=cur!=='en'?look(String(t).trim()):null;return oc.call(window,x||t)};
-window.__lang={get:function(){return cur},set:function(c){cur=c;try{localStorage.setItem('rt_lang',cur)}catch(e){}apply()},opts:[['en','EN','English'],['ny','NY','Chichewa / Nyanja'],['bem','BEM','Bemba'],['toi','TON','Tonga']]};
-setTimeout(apply,300);setTimeout(apply,1500);
-})();
 </script>
 </body>
 </html>
