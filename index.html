@@ -197,6 +197,8 @@ body.hasnav .sig{display:none}
 .drop:focus-within{border-color:var(--moss)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .thumb{width:56px;height:56px;object-fit:cover;border-radius:10px;flex:none}
+.crow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px}
+.crow>.mute{flex:1 1 100%}
 .chip2{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:99px;background:var(--soft);color:var(--moss)}
 .alertb{display:flex;align-items:center;gap:10px;background:#FBE3D3;color:#7A3410;border:1px solid #F1BE9B;border-radius:14px;padding:12px 14px;margin-bottom:12px;font-weight:600}
 .offline{position:sticky;top:0;z-index:60;background:var(--red);color:#fff;text-align:center;padding:7px;font-size:13px;font-weight:600;border-radius:0 0 12px 12px}
@@ -351,7 +353,11 @@ function VoiceNav({r,pos}){
      s.busy=false}
    }
    const toDest=dist(pos.lat,pos.lng,s.dest.lat,s.dest.lng);
-   if(toDest<40){if(!s.said.arr){s.said.arr=1;say('You have arrived at your destination.');setNxt('You have arrived')}return}
+   const weak=(pos.acc||0)>50;
+   if(weak){setNxt(toDest<150?'GPS signal is weak. Move to open sky to confirm arrival.':'Weak GPS signal (±'+Math.round(pos.acc)+' m)');if(!s.said.weak){s.said.weak=1;say('GPS signal is weak.')}}
+   else if(s.said.weak)s.said.weak=0;
+   if(!weak&&toDest<50){if(!s.said.arr){s.said.arr=1;say('You have arrived at your destination.');setNxt('You have arrived')}return}
+   if(weak&&toDest<150)return;
    const t=Date.now();let off=false;
    if(s.route){const st=s.route.steps;let min=1e9;
     for(let k=s.i;k<st.length&&k<s.i+3;k++){const c=st[k].geometry.coordinates;for(let j=0;j<c.length-1;j++){const d=segD(pos,c[j],c[j+1]);if(d<min)min=d}}
@@ -381,20 +387,23 @@ function VoiceNav({r,pos}){
 }
 
 function Live({r,act}){
- const [acc,setAcc]=useState(null);const [err,setErr]=useState('');const [pos,setPos]=useState(null);
+ const [acc,setAcc]=useState(null);const [err,setErr]=useState('');const [pos,setPos]=useState(null);const [eta,setEta]=useState(null);
  useEffect(()=>{
   if(!navigator.geolocation){setErr('GPS is not available on this device.');return}
   const w=navigator.geolocation.watchPosition(p=>{setErr('');setAcc(Math.round(p.coords.accuracy));setPos({lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy});act.pos(r.id,p.coords.latitude,p.coords.longitude)},()=>setErr('Allow location access so the client and manager can track you.'),{enableHighAccuracy:true,maximumAge:2000,timeout:20000});
   return()=>navigator.geolocation.clearWatch(w)},[r.id]);
- return <div className="codebox">{err?<span style={{color:'var(--red)'}}>{err}</span>:<span>Sharing live GPS{acc!=null?` (accuracy ${acc} m)`:''}…</span>}<TrackMap r={r} me={pos}/><VoiceNav r={r} pos={pos}/></div>
+ return <div className="codebox">{err?<span style={{color:'var(--red)'}}>{err}</span>:<span>Sharing live GPS{acc!=null?` (accuracy ${acc} m)`:''}…</span>}{!err&&acc!=null&&acc>50&&<div className="alertb" style={{marginTop:8,display:'block'}}>⚠️ Weak GPS signal (±{acc} m). Step outside or away from buildings. Arrival is only confirmed when accuracy is under 50 m.</div>}<TrackMap r={r} me={pos} onEta={setEta}/><NotifyCustomer r={r} eta={eta} act={act}/><VoiceNav r={r} pos={pos}/></div>
 }
 
 /* ===== Live map with route + ETA (Leaflet + OpenStreetMap + OSRM) ===== */
 const TILES=[['https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Tiles &copy; Esri'}],['https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{subdomains:'abcd',maxZoom:19,attribution:'&copy; OpenStreetMap contributors &copy; CARTO'}],['https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}]];
 const GEO={};const geoOnce=async a=>{if(GEO[a])return GEO[a];const g=await geocode(a);GEO[a]=g;return g};
-function LiveMap({r,me}){
+function LiveMap({r,me,onEta}){
  const box=useRef(null),M=useRef({}),[eta,setEta]=useState(null),[gd,setGd]=useState(null);
  const p=me||r.pos,dest=r.lat!=null?{lat:r.lat,lng:r.lng}:gd;
+ const {role:vrole}=useContext(PeopleCtx),heard=useRef(false);
+ useEffect(()=>{onEta&&onEta(eta)},[eta]);
+ useEffect(()=>{if(vrole!=='client'||me||!eta||eta.min>5||heard.current)return;heard.current=true;try{navigator.vibrate&&navigator.vibrate([300,150,300])}catch(e){}speak('Your collector is about '+eta.min+(eta.min===1?' minute':' minutes')+' away.')},[eta&&eta.min<=5]);
  useEffect(()=>{if(r.lat!=null||!r.addr)return;let off=false;geoOnce(r.addr).then(g=>{if(!off)setGd(g)}).catch(()=>{});return()=>{off=true}},[r.id,r.addr,r.lat]);
  useEffect(()=>{const L=window.L;if(!L||!box.current)return;
   const map=L.map(box.current,{zoomControl:false,scrollWheelZoom:false}).setView([p.lat,p.lng],15);
@@ -418,15 +427,15 @@ function LiveMap({r,me}){
     setEta({min:Math.max(1,Math.round(rt.duration/60)),km:rt.distance/1000})}).catch(()=>{if(M.current!==m)return;const d=dist(p.lat,p.lng,dest.lat,dest.lng);setEta({min:Math.max(1,Math.round(d/1000/25*60)),km:d/1000,approx:true})})}
  },[p&&p.lat,p&&p.lng,dest&&dest.lat,dest&&dest.lng]);
  const fit=()=>{const m=M.current;if(!m.map||!p)return;dest?m.map.fitBounds([[p.lat,p.lng],[dest.lat,dest.lng]],{padding:[40,40],maxZoom:16}):m.map.setView([p.lat,p.lng],15)};
- return <div className="lmap"><div ref={box} style={{height:'100%'}}/>
+ return <>{vrole==='client'&&!me&&eta&&eta.min<=5&&<div className="alertb" role="status" style={{marginTop:10}}>🚛 Your collector is about {eta.min} min away. Please have your waste ready.</div>}<div className="lmap"><div ref={box} style={{height:'100%'}}/>
   {eta?<div className="eta">≈ {eta.min} min<small>{eta.km.toFixed(1)} km {eta.approx?'straight line':'by road'}</small></div>:<div className="eta">Live position<small>Updating…</small></div>}
-  <button className="btn alt sm recenter" onClick={fit}>Recenter</button></div>
+  <button className="btn alt sm recenter" onClick={fit}>Recenter</button></div></>
 }
-function TrackMap({r,me}){
+function TrackMap({r,me,onEta}){
  if(r.status!=='enroute')return null;
  const p=me||r.pos;
  if(!p)return <div className="mute" style={{marginTop:8}}>Waiting for the collector's GPS signal…</div>;
- return window.L?<LiveMap r={r} me={me}/>:<TrackSvg r={r}/>}
+ return window.L?<LiveMap r={r} me={me} onEta={onEta}/>:<TrackSvg r={r}/>}
 
 function TrackSvg({r}){
  if(r.status!=='enroute')return null;
@@ -479,7 +488,7 @@ function PCard({r,mgr,open,children}){
   <span className="grow"><b>{r.type}</b>{mgr&&<span> · {r.client}</span>}<span className="mute" style={{display:'block'}}>{r.addr}</span></span>
   <span className={'pill '+r.status}>{LABEL[r.status]}</span><span className="chev">{o?'▲':'▼'}</span></button>
   <Stepper s={r.status}/>
-  {o&&<div className="pc-b"><div className="mute">🕒 {r.slot} · requested {ago(T(r))}</div>{r.notes&&<div>“{r.notes}”</div>}{r.worker&&<div className="mute" style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>🚛 <Person id={r.worker_id} name={r.worker} role="worker"/>{r.kg?<span>{' · '+r.kg+' kg collected'}</span>:null}</div>}<TrackMap r={r}/><Proof r={r}/><Nav r={r}/>{children}</div>}</div>}
+  {o&&<div className="pc-b"><div className="mute">🕒 {r.slot} · requested {ago(T(r))}</div>{r.notes&&<div>“{r.notes}”</div>}{r.worker&&<div className="mute" style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>🚛 <Person id={r.worker_id} name={r.worker} role="worker"/>{r.kg?<span>{' · '+r.kg+' kg collected'}</span>:null}</div>}<JobContacts r={r}/><TrackMap r={r}/><Proof r={r}/><Nav r={r}/>{children}</div>}</div>}
 function Bars({data}){const m=Math.max(1,...data.map(d=>d.v));return <svg viewBox={'0 0 '+data.length*40+' 104'} width="100%" role="img" aria-label="Pickups requested in the last 7 days">{data.map((d,i)=>{const h=d.v/m*60;return <g key={i}><rect x={i*40+6} y={78-h} width="28" height={Math.max(h,3)} rx="7" fill="var(--moss)" opacity={d.v?1:.25}/><text x={i*40+20} y={73-h} textAnchor="middle" fontSize="11" fill="var(--ink)">{d.v?(d.v>=1000?(d.v/1000).toFixed(1)+'k':d.v):''}</text><text x={i*40+20} y="98" textAnchor="middle" fontSize="11" fill="var(--mute)">{d.l}</text></g>})}</svg>}
 
 /* ===== v2 interface: shared pieces ===== */
@@ -518,6 +527,44 @@ const WINS=['08:00–10:00','10:00–12:00','12:00–14:00','14:00–16:00'];
 const dayOpts=()=>{const d=new Date(),f=n=>{const x=new Date(d);x.setDate(d.getDate()+n);return x};return [['Today',f(0)],['Tomorrow',f(1)],[f(2).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'}),f(2)]]};
 const greet=()=>{const h=new Date().getHours();return h<12?'Good morning':h<17?'Good afternoon':'Good evening'};
 const waLink=r=>'https://wa.me/?text='+encodeURIComponent(`RayTECH pickup: ${r.type} at ${r.addr} (${r.slot}). Status: ${LABEL[r.status]}.`);
+
+/* ===== Phone numbers: call, WhatsApp and SMS (number entered at registration is used everywhere) ===== */
+const normPhone=v=>{let d=String(v||'').trim().replace(/[\s().-]/g,'');if(!d)return '';const plus=d[0]==='+';d=d.replace(/\D/g,'');if(!d)return '';
+ if(plus){}else if(d.startsWith('00'))d=d.slice(2);else if(d.length===12&&d.startsWith('260')){}else if(d.length===10&&d[0]==='0')d='260'+d.slice(1);else if(d.length===9)d='260'+d;else return '';
+ if(!/^\d{9,15}$/.test(d))return '';if(d.startsWith('260')&&d.length!==12)return '';return '+'+d};
+const showPhone=p=>{const n=normPhone(p);return n.startsWith('+260')?'0'+n.slice(4):n};
+const telHref=p=>'tel:'+normPhone(p);
+const waHref=(p,t)=>'https://wa.me/'+normPhone(p).replace('+','')+(t?'?text='+encodeURIComponent(t):'');
+const smsHref=(p,t)=>'sms:'+normPhone(p)+(t?'?body='+encodeURIComponent(t):'');
+const first=n=>String(n||'').trim().split(/\s+/)[0]||'there';
+const hello=(role,me,nm,r)=>role==='manager'?`Hello ${first(nm)}, this is RayTECH about the pickup at ${r.addr}.`:role==='worker'?`Hello ${first(nm)}, this is ${me||'your collector'} from RayTECH, your collector for the pickup at ${r.addr}.`:`Hello ${first(nm)}, this is ${me||'your client'} about my RayTECH pickup at ${r.addr}.`;
+function Contact({phone,name,msg,label}){
+ const n=normPhone(phone);if(!n)return null;
+ const b={display:'inline-flex',gap:6,alignItems:'center',textDecoration:'none'};
+ return <div className="crow">{label&&<span className="mute">{label}</span>}
+  <a className="btn alt sm" style={b} href={telHref(n)} aria-label={'Call '+(name||'')}>📞 Call</a>
+  <a className="btn alt sm" style={b} href={waHref(n,msg)} target="_blank" rel="noopener" aria-label={'WhatsApp '+(name||'')}>💬 WhatsApp</a>
+  <a className="btn alt sm" style={b} href={smsHref(n,msg)} aria-label={'SMS '+(name||'')}>✉️ SMS</a></div>}
+function JobContacts({r}){
+ const {people,me,meName,role}=useContext(PeopleCtx);
+ if(r.status==='requested'&&role!=='manager')return null;
+ const rows=[];
+ const add=(id,nm,ic)=>{const p=people[id];if(!id||id===me||!p||!normPhone(p.phone))return;rows.push(<Contact key={id} phone={p.phone} name={nm} label={ic+' '+first(nm)+' · '+showPhone(p.phone)} msg={hello(role,meName,nm,r)}/>)};
+ add(r.worker_id,r.worker,'🚛');add(r.uid,r.client,'🏠');
+ return rows.length?<div style={{marginTop:6}}>{rows}</div>:null}
+function NotifyCustomer({r,eta,act}){
+ const {people,meName}=useContext(PeopleCtx);
+ const ph=normPhone((people[r.uid]||{}).phone),mins=eta?eta.min:null,near=mins!=null&&mins<=5,sent=useRef(false);
+ useEffect(()=>{if(!near||sent.current)return;sent.current=true;try{navigator.vibrate&&navigator.vibrate([200,100,200])}catch(e){}act.toast('You are about '+mins+' min away. Tell the customer with WhatsApp or SMS.');act.near&&act.near(r,mins)},[near]);
+ const msg=`Hello ${first(r.client)}, this is ${meName||'your collector'} from RayTECH. ${mins!=null?`I am about ${mins} minute${mins===1?'':'s'} away`:'I am on my way'} to ${r.addr}. Please have your waste ready. Thank you.`;
+ return <div className={near?'alertb':'codebox'} style={{marginTop:10,display:'block'}}>
+  <b>{near?`📣 You are about ${mins} min away. Tell ${first(r.client)} now.`:`Message ${first(r.client)}`}</b>
+  {ph?<Contact phone={ph} name={r.client} msg={msg} label={showPhone(ph)}/>:<div className="mute" style={{marginTop:4}}>{first(r.client)} has not added a phone number yet.</div>}</div>}
+function PhoneEdit({user,ui,cta}){
+ const [v,setV]=useState(user.phone?showPhone(user.phone):'');const ok=normPhone(v),same=ok&&ok===normPhone(user.phone);
+ return <div><input type="tel" inputMode="tel" autoComplete="tel" value={v} onChange={e=>setV(e.target.value)} placeholder="0971234567" aria-label="Phone number"/>
+  <div className="mute" style={{marginTop:4}}>{v&&!ok?'Enter a number like 0971234567 or +260971234567.':'Use a number that has WhatsApp.'}</div>
+  <button className="btn sm" style={{marginTop:10}} disabled={!ok||same} onClick={()=>ui.savePhone(v)}>{cta||'Save number'}</button></div>}
 const getRated=()=>{try{return JSON.parse(localStorage.getItem('rated_jobs')||'{}')}catch(e){return{}}};
 
 function BottomNav({tabs,tab,set}){return <nav className="bnav" aria-label="Main">{tabs.map(([k,ic,l,b])=><button key={k} className={tab===k?'on':''} aria-current={tab===k?'page':undefined} onClick={()=>{set(k);window.scrollTo({top:0})}}><Ic n={ic}/>{l}{b>0&&<em>{b}</em>}</button>)}</nav>}
@@ -531,12 +578,14 @@ function Rate({r,act}){
 function Person({id,name,role}){
  const {people,open}=useContext(PeopleCtx);const p=people[id]||{};
  if(!name)return null;
- return <button type="button" className="person" onClick={()=>open({id,name:p.name||name,role:p.role||role,avatar_url:p.avatar_url||null,jobs:p.jobs})} aria-label={'View profile of '+name}><Av u={{name:p.name||name,avatar_url:p.avatar_url}} cls="xs"/><span>{name}</span></button>}
+ return <button type="button" className="person" onClick={()=>open({id,name:p.name||name,role:p.role||role,avatar_url:p.avatar_url||null,jobs:p.jobs,phone:p.phone||null})} aria-label={'View profile of '+name}><Av u={{name:p.name||name,avatar_url:p.avatar_url}} cls="xs"/><span>{name}</span></button>}
 function PersonSheet({p,onClose}){
+ const {meName,role}=useContext(PeopleCtx);
  return <div className="ov" role="dialog" aria-modal="true" aria-label={p.name+' profile'} onClick={onClose}><div className="card" onClick={e=>e.stopPropagation()}>
   {p.avatar_url?<img className="pbig" src={p.avatar_url} alt={p.name+' profile picture'}/>:<div className="pbig">{ini(p.name)}</div>}
   <h2 style={{marginBottom:2}}>{p.name}</h2><div className="mute">{p.role==='worker'?'🚛 Collector':p.role==='manager'?'Manager':'🏠 Client'}</div>
   {p.jobs!=null&&<div className="chip2" style={{display:'inline-block',marginTop:10}}>{p.jobs} pickup{p.jobs===1?'':'s'} with you</div>}
+  {normPhone(p.phone)&&<div style={{marginTop:12}}><div className="mute">📱 {showPhone(p.phone)}</div><Contact phone={p.phone} name={p.name} msg={`Hello ${first(p.name)}, this is ${role==='manager'?'RayTECH':(meName||'a RayTECH user')}.`}/></div>}
   <button className="btn full" style={{marginTop:16}} onClick={onClose}>Close</button></div></div>}
 function Profile({user,ui}){
  const [t,setT]=useTheme(),ins=useInstall(),[up,setUp]=useState(false),[nrcIn,setNrcIn]=useState('');
@@ -553,6 +602,7 @@ function Profile({user,ui}){
    :<div><div className="mute" style={{margin:'8px 0'}}>Add your NRC once. After saving it cannot be changed.</div>
     <input value={nrcIn} onChange={e=>setNrcIn(fmtNRC(e.target.value))} inputMode="numeric" placeholder="123456/10/1" maxLength={11} aria-label="NRC number"/>
     <button className="btn sm" style={{marginTop:10}} onClick={()=>ui.saveNrc(nrcIn)}>Save NRC</button></div>}</div>
+  <div className="card"><h3>Phone number</h3><div className="mute" style={{margin:'6px 0 8px'}}>Used for calls and WhatsApp with your {user.role==='worker'?'customers':user.role==='manager'?'team and clients':'collector'}.</div><PhoneEdit key={user.phone||'none'} user={user} ui={ui}/></div>
   <div className="card"><h3>Appearance</h3><div className="mute" style={{marginBottom:8}}>Match your phone, or choose a theme.</div><Chips val={t} set={setT} opts={[['auto','Auto'],['light','Light'],['dark','Dark']]}/></div>
   {PUSH&&<div className="card"><h3>Alerts</h3>{ui.pushOn?<div className="mute" style={{marginTop:6}}>Alerts are on for this phone.</div>:<div><div className="mute" style={{margin:'6px 0 10px'}}>Get notified even when the app is closed.</div><button className="btn sm" onClick={ui.enablePush}>Turn on alerts</button></div>}</div>}
   {!ins.standalone&&(ins.can||ins.ios)&&<div className="card"><h3>Install the app</h3><div className="mute" style={{margin:'6px 0 10px'}}>{ins.can?'Add RayTECH to your home screen for quick access.':'On iPhone, tap Share, then Add to Home Screen.'}</div>{ins.can&&<button className="btn sm" onClick={ins.go}>Install app</button>}</div>}
@@ -561,6 +611,22 @@ function Profile({user,ui}){
   <div className="sigp">Created by Raymond Himaambo@innovations<br/><a href="tel:+260979566905">+260979566905</a></div>
  </div>}
 
+function Earnings({list,pays}){
+ const DAY=864e5,now=Date.now(),sod=new Date().setHours(0,0,0,0);
+ const rows=[['Today',sod],['Last 7 days',now-7*DAY],['Last 30 days',now-30*DAY]].map(([l,t])=>{const rs=list.filter(r=>T(r)>=t),ids=new Set(rs.map(r=>String(r.id)));
+  return {l,n:rs.length,kg:rs.reduce((a,r)=>a+Number(r.kg||0),0),k:pays.filter(p=>ids.has(p.request_id)&&p.status==='confirmed').reduce((a,p)=>a+p.amount,0)}});
+ return <div className="card" style={{marginBottom:12}}><b>My earnings</b>
+  {rows.map(x=><div className="row" key={x.l} style={{marginTop:8,alignItems:'center'}}><span>{x.l}</span><span className="mute">{x.n} pickup{x.n===1?'':'s'} · {x.kg} kg · K{x.k.toFixed(2)}</span></div>)}
+  <div className="mute" style={{marginTop:8}}>Dates use the day the pickup was requested. Money shows confirmed payments only.</div></div>}
+function Receipt({r,st,act}){
+ if(r.status==='collected'){
+  const p=st.pays.find(x=>x.request_id===String(r.id)&&x.status!=='rejected');
+  const txt=`RayTECH receipt\nDate: ${new Date(T(r)).toLocaleDateString()}\nService: ${r.type}\nAddress: ${r.addr}\nWeight: ${r.kg||'-'} kg\nPaid: ${p?'K'+p.amount.toFixed(2)+' ('+p.provider+(p.status==='confirmed'?', confirmed':', pending')+')':'not yet paid'}\nCollector: ${r.worker||'-'}`+(r.proofUrl?`\nPhoto proof: ${r.proofUrl}`:'');
+  const share=()=>{if(navigator.share)navigator.share({title:'RayTECH receipt',text:txt}).catch(()=>{});else window.open('https://wa.me/?text='+encodeURIComponent(txt),'_blank')};
+  return <button className="btn alt sm" style={{marginTop:8}} onClick={share}>🧾 Share receipt</button>}
+ if(r.status==='assigned'||r.status==='enroute')
+  return <button className="btn alt sm" style={{marginTop:8,color:'var(--red)'}} onClick={()=>{if(confirm('Tell the manager the collector did not come?'))act.missed(r)}}>⚠️ Collector didn’t come</button>;
+ return null}
 function Client({st,act,user,ui}){
  const [tab,setTab]=useState('home');
  const days=dayOpts(),hr=new Date().getHours(),open0=WINS.findIndex(w=>parseInt(w)>hr);
@@ -622,7 +688,7 @@ function Client({st,act,user,ui}){
    <Chips val={fl} set={v=>{setFl(v);pg.reset()}} opts={[['all','All',mine.length],['active','Active',act1.length],['done','Completed',dn.length]]}/>
    {fl==='done'&&dn.length>0&&<div style={{margin:'0 0 12px'}}><button className="btn alt sm" style={{color:'var(--red)'}} onClick={()=>act.hide(dn.map(r=>r.id))}>🗑 Delete all completed ({dn.length})</button></div>}
    {list.length===0&&<div className="card empty">{mine.length?'No pickups match your search.':'No pickups yet. Tap New pickup to get started.'}</div>}
-   <div className="list2">{pg.items.map(r=><PCard key={r.id} r={r} open={r.status==='collected'&&!st.pays.some(p=>p.request_id===String(r.id)&&p.status!=='rejected')}><PayBox r={r} st={st} act={act}/><Rate r={r} act={act}/>
+   <div className="list2">{pg.items.map(r=><PCard key={r.id} r={r} open={r.status==='collected'&&!st.pays.some(p=>p.request_id===String(r.id)&&p.status!=='rejected')}><PayBox r={r} st={st} act={act}/><Rate r={r} act={act}/><Receipt r={r} st={st} act={act}/>
      <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:12}}>{r.status==='collected'&&<button className="btn alt sm" onClick={()=>again(r)}>🔁 Request again</button>}{r.status==='collected'&&<button className="btn alt sm" style={{color:'var(--red)'}} onClick={()=>act.hide([r.id])}>🗑 Delete</button>}{r.status!=='collected'&&<button className="btn alt sm" style={{color:'var(--red)'}} onClick={()=>act.cancel(r)}>✖ Cancel pickup</button>}<a className="btn alt sm" style={{textDecoration:'none',display:'inline-flex',gap:6,alignItems:'center'}} href={waLink(r)} target="_blank" rel="noopener"><Ic n="share" s={15}/>Share</a></div></PCard>)}</div>
    {pg.pager}</div>}
   {tab==='me'&&<Profile user={user} ui={ui}/>}
@@ -652,6 +718,7 @@ const [here,setHere]=useState(null),[near,setNear]=useState(false);
  const dd=r=>here&&r.lat!=null?dist(here.lat,here.lng,r.lat,r.lng):null;
  const jobs=[...mine].sort((a,b)=>{const ea=a.status==='enroute',eb=b.status==='enroute';if(ea!==eb)return ea?-1:1;if(near){const x=dd(a),y=dd(b);return (x==null?1e12:x)-(y==null?1e12:y)}return 0});
  const mp=usePaged(jobs,4,'jobs'),dp=usePaged(done,6,'completed');
+ useEffect(()=>{if(mine.length>1&&navigator.geolocation&&!here)navigator.geolocation.getCurrentPosition(p=>{setHere({lat:p.coords.latitude,lng:p.coords.longitude});setNear(true)},()=>{},{enableHighAccuracy:true,timeout:10000,maximumAge:60000})},[mine.length>1]);
  const totalKg=doneAll.reduce((a,r)=>a+Number(r.kg||0),0);
  const locate=()=>{if(near)return setNear(false);if(!navigator.geolocation)return act.toast('GPS is not available on this device.');act.toast('Finding your location…');
   navigator.geolocation.getCurrentPosition(p=>{setHere({lat:p.coords.latitude,lng:p.coords.longitude});setNear(true)},()=>act.toast('Allow location access to sort by distance.'),{enableHighAccuracy:true,timeout:12000})};
@@ -675,6 +742,7 @@ const [here,setHere]=useState(null),[near,setNear]=useState(false);
     {r.notes&&<div className="codebox">“{r.notes}”</div>}
     {d!=null&&<div style={{marginTop:8}}><span className="chip2">{fmt(d)} away</span></div>}
     <Track s={r.status}/>
+    <JobContacts r={r}/>
     <Nav r={r}/>{r.status==='enroute'&&<Live r={r} act={act}/>}
     {r.status==='assigned'&&PENDING.has(r.id)&&<button className="btn warn full" onClick={()=>act.accept(r.id)}>Accept job (stop alarm)</button>}
     {r.status==='assigned'&&<button className="btn full" onClick={()=>{window.VOICE_OK=speak('Starting trip.');markAccepted(r.id);stopAlarm(r.id);act.accepted(r.id);act.move(r.id,'enroute')}}>Start trip and share GPS</button>}
@@ -690,6 +758,7 @@ const [here,setHere]=useState(null),[near,setNear]=useState(false);
    {mp.pager}
   </div>}
   {tab==='done'&&<div>
+   <Earnings list={doneAll} pays={st.pays}/>
    <div className="grid two"><div className="card stat"><b>{doneAll.length}</b><span className="mute">Pickups completed</span></div><div className="card stat"><b>{totalKg} kg</b><span className="mute">Total collected</span></div></div>
    {done.length>0&&<div style={{margin:'0 0 12px'}}><button className="btn alt sm" style={{color:'var(--red)'}} onClick={()=>act.hide(done.map(r=>r.id))}>🗑 Delete all completed ({done.length})</button></div>}
    {done.length===0&&<div className="card empty">Completed pickups will appear here.</div>}
@@ -758,9 +827,9 @@ function ClientRow({u,reqs}){
  const [o,setO]=useState(false);
  const act1=reqs.filter(r=>r.status!=='collected').length,kg=reqs.reduce((a,r)=>a+Number(r.kg||0),0);
  return <div className="card pc"><button className="pc-h" onClick={()=>setO(!o)} aria-expanded={o}><span className="av">{ini(u.name)}</span>
-  <span className="grow"><b>{u.name}</b><span className="mute" style={{display:'block'}}>{u.email}{u.nrc?' · NRC '+u.nrc:''}</span></span>
+  <span className="grow"><b>{u.name}</b><span className="mute" style={{display:'block'}}>{u.email}{u.phone?' · '+showPhone(u.phone):''}{u.nrc?' · NRC '+u.nrc:''}</span></span>
   <span className="mute" style={{textAlign:'right'}}>{reqs.length} pickups{act1>0&&<b style={{color:'var(--amber)'}}> · {act1} open</b>}<span style={{display:'block'}}>{kg} kg</span></span><span className="chev">{o?'▲':'▼'}</span></button>
-  {o&&<div className="pc-b">{reqs.length===0&&<div className="mute">No pickups yet.</div>}{reqs.map(r=><div className="note" key={r.id}><span>{ICON[r.type]||'🗑️'}</span><div style={{flex:1}}><b>{r.type}</b><div className="mute">{r.addr} · {ago(T(r))}</div></div><span className={'pill '+r.status}>{SHORT[r.status]}</span></div>)}</div>}</div>}
+  {o&&<div className="pc-b"><Contact phone={u.phone} name={u.name} msg={'Hello '+first(u.name)+', this is RayTECH.'} label={u.phone?'📱 '+showPhone(u.phone):''}/>{reqs.length===0&&<div className="mute">No pickups yet.</div>}{reqs.map(r=><div className="note" key={r.id}><span>{ICON[r.type]||'🗑️'}</span><div style={{flex:1}}><b>{r.type}</b><div className="mute">{r.addr} · {ago(T(r))}</div></div><span className={'pill '+r.status}>{SHORT[r.status]}</span></div>)}</div>}</div>}
 
 const fK=v=>'K'+Number(v||0).toLocaleString();
 const isHid=(r,id)=>(r.hidden_by||[]).includes(id);
@@ -868,7 +937,7 @@ function Manager({st,act,users,me}){
   {tab==='team'&&<div className="card"><h2 style={{marginBottom:4}}>Team</h2><div className="mute" style={{marginBottom:10}}>People choose Client or Collector when they register. Only you can promote someone to Manager (or change a role) (managers have the same powers as you), or block anyone who should not have access.</div>
    <Search v={q} set={v=>{setQ(v);tp.reset()}} ph="Search people"/>
    <Chips val={rf} set={v=>{setRf(v);tp.reset()}} opts={[['all','All',users.length],...Object.entries(ROLE).map(([k,l])=>[k,l+'s',users.filter(u=>u.role===k).length]),['blocked','🚫 Blocked',users.filter(u=>u.blocked).length]]}/>
-   {tp.items.map(u=>{const mine1=u.id===me;return <div className="note" key={u.id} style={{alignItems:'center',flexWrap:'wrap',opacity:u.blocked?.65:1}}><Av u={u}/><div style={{flex:1,minWidth:150}}><b>{u.name}</b>{mine1&&<span className="pill" style={{marginLeft:6}}>You</span>}{u.blocked&&<span className="pill" style={{marginLeft:6,background:'#FBD9CE',color:'#7A2410'}}>Blocked</span>}<div className="mute">{u.email}</div></div>
+   {tp.items.map(u=>{const mine1=u.id===me;return <div className="note" key={u.id} style={{alignItems:'center',flexWrap:'wrap',opacity:u.blocked?.65:1}}><Av u={u}/><div style={{flex:1,minWidth:150}}><b>{u.name}</b>{mine1&&<span className="pill" style={{marginLeft:6}}>You</span>}{u.blocked&&<span className="pill" style={{marginLeft:6,background:'#FBD9CE',color:'#7A2410'}}>Blocked</span>}<div className="mute">{u.email}{u.phone?' · '+showPhone(u.phone):''}</div>{u.phone&&<Contact phone={u.phone} name={u.name} msg={'Hello '+first(u.name)+', this is RayTECH.'}/>}</div>
     <select aria-label={'Role for '+u.name} style={{width:130}} disabled={mine1} value={u.role} onChange={e=>act.setRole(u.id,e.target.value)}>{Object.entries(ROLE).map(([k,l])=><option key={k} value={k}>{l}</option>)}</select>
     {!mine1&&<button className="btn alt sm" style={u.blocked?{}:{color:'var(--red)'}} onClick={()=>{if(u.blocked||confirm('Block '+u.name+'?\n\nThey will be signed out and cannot use the app until you unblock them.'))act.block(u.id,!u.blocked)}}>{u.blocked?'✅ Unblock':'🚫 Block'}</button>}</div>})}
    {tp.pager}</div>}
@@ -895,7 +964,7 @@ const toNote=x=>({id:x.id,text:x.text,read:x.is_read,time:new Date(x.created).to
 
 function Auth({msg,setMsg}){
  const [mode,setMode]=useState('login');
- const [f,setF]=useState(()=>{let e='';try{e=localStorage.getItem('rt_last_email')||''}catch(x){}return {name:'',nrc:'',email:e,pw:'',pw2:'',role:'client'}});const [pic,setPic]=useState(null);
+ const [f,setF]=useState(()=>{let e='';try{e=localStorage.getItem('rt_last_email')||''}catch(x){}return {name:'',phone:'',nrc:'',email:e,pw:'',pw2:'',role:'client'}});const [pic,setPic]=useState(null);
  const [rem,setRem]=useState(rememberOn());
  const set=k=>e=>setF({...f,[k]:e.target.value});
  const em=f.email.trim().toLowerCase();
@@ -906,13 +975,14 @@ function Auth({msg,setMsg}){
   try{if(rem&&window.PasswordCredential&&navigator.credentials)await navigator.credentials.store(new PasswordCredential({id:em,password:f.pw,name:em}))}catch(e){}};
  const register=async()=>{
   if(!f.name.trim())return setMsg('Enter your full name.');
+  const ph=normPhone(f.phone);if(!ph)return setMsg('Enter a valid phone number like 0971234567.');
   if(!NRC_RE.test(f.nrc))return setMsg('Enter your NRC like 123456/10/1.');
   if(!em)return setMsg('Enter your email.');
   if(f.pw.length<6)return setMsg('Password must be at least 6 characters.');
   if(f.pw!==f.pw2)return setMsg('Passwords do not match.');
   {const {data:free,error:ne}=await sb.rpc('nrc_available',{p_nrc:f.nrc});if(!ne&&free===false)return setMsg('This NRC is already registered. Log in instead, or contact RayTECH.')}
   try{localStorage.setItem('rt_remember','1');localStorage.setItem('rt_last_email',em)}catch(e){}
-  const {data,error}=await sb.auth.signUp({email:em,password:f.pw,options:{data:{name:f.name.trim(),nrc:f.nrc,requested_role:f.role==='worker'?'worker':'client'}}});
+  const {data,error}=await sb.auth.signUp({email:em,password:f.pw,options:{data:{name:f.name.trim(),phone:ph,nrc:f.nrc,requested_role:f.role==='worker'?'worker':'client'}}});
   if(!error&&pic)window.PENDING_AVATAR=pic;
   if(error)return setMsg(errTxt(error));
   try{if(window.PasswordCredential&&navigator.credentials)await navigator.credentials.store(new PasswordCredential({id:em,password:f.pw,name:f.name.trim()}))}catch(e){}
@@ -929,6 +999,7 @@ function Auth({msg,setMsg}){
     <button className="btn full" type="submit">Log in</button>
     <div className="row" style={{marginTop:8}}><button type="button" className="link" onClick={()=>go('forgot')}>Forgot password?</button><button type="button" className="link" onClick={()=>go('register')}>Create account</button></div></form>}
    {mode==='register'&&<form onSubmit={e=>{e.preventDefault();register()}}><div><label>I am registering as</label><Chips val={f.role} set={v=>setF({...f,role:v})} opts={[['client','Client'],['worker','Collector']]}/><div className="mute" style={{marginTop:4}}>{f.role==='worker'?'Collect garbage and earn per pickup.':'Request garbage pickups.'}</div></div>{field('n','Full name','name')}
+    <div><label htmlFor="ph">Phone number</label><input id="ph" name="phone" type="tel" inputMode="tel" autoComplete="tel" value={f.phone} onChange={e=>setF({...f,phone:e.target.value})} placeholder="0971234567"/><div className="mute" style={{marginTop:4}}>Used for calls and WhatsApp between you, your {f.role==='worker'?'customers':'collector'} and RayTECH. Use a number that has WhatsApp.</div></div>
     <div><label htmlFor="nrc">NRC number</label><input id="nrc" name="nrc" inputMode="numeric" autoComplete="off" value={f.nrc} onChange={e=>setF({...f,nrc:fmtNRC(e.target.value)})} placeholder="123456/10/1" maxLength={11}/><div className="mute" style={{marginTop:4}}>Your NRC becomes your permanent ID. It is linked to your name and email and cannot be changed or used on another account.</div></div>
     {field('e','Email','email','email')}{field('p','Password','pw','password','At least 6 characters')}{field('p2','Confirm password','pw2','password')}
     <div><label htmlFor="rpic">Profile picture (optional)</label><div style={{display:'flex',gap:10,alignItems:'center'}}>{pic&&<Thumb file={pic}/>}<input id="rpic" type="file" accept="image/*" onChange={e=>setPic(e.target.files[0]||null)}/></div></div>
@@ -970,7 +1041,8 @@ function App(){
  const link=reqs.map(r=>r.id+':'+(r.worker_id||'')).join(',');
  useEffect(()=>{if(!configured||!user)return;
   if(user.role==='manager'){const m={};users.forEach(u=>{m[u.id]=u});setPeople(m);return}
-  let live=true;sb.rpc('my_people').then(({data})=>{if(!live||!data)return;const m={};data.forEach(x=>{m[x.id]=x});setPeople(m)},()=>{});
+  let live=true;sb.rpc('my_people').then(({data})=>{if(!live||!data)return;const m={};data.forEach(x=>{m[x.id]=x});setPeople(m);
+   sb.rpc('my_contacts').then(({data:c})=>{if(!live||!c)return;setPeople(p=>{const q={...p};c.forEach(x=>{q[x.id]={...(q[x.id]||{id:x.id}),phone:x.phone}});return q})},()=>{})},()=>{});
   return()=>{live=false}},[user&&user.id,user&&user.role,users,link]);
  const st={reqs,notes,pays};
  const merge=row=>setReqs(p=>[toReq(row),...p.filter(x=>x.id!==row.id)].sort((a,b)=>b.created-a.created));
@@ -985,6 +1057,7 @@ function App(){
   (async()=>{for(let i=0;i<5;i++){const {data}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();if(off)return;if(data){if(data.blocked){setMsg('Your account has been blocked. Contact RayTECH.');sb.auth.signOut();return}let d=data;try{const rq=session.user.user_metadata&&session.user.user_metadata.requested_role;
    if(rq==='worker'&&d.role==='client'&&d.role_claimed===false){const {error:ce}=await sb.rpc('claim_signup_role');if(!ce)d={...d,role:'worker',role_claimed:true}}
    if(window.PENDING_AVATAR){const f=window.PENDING_AVATAR;window.PENDING_AVATAR=null;const path=d.id+'.jpg';const up=await sb.storage.from('avatars').upload(path,await sq(f),{contentType:'image/jpeg',upsert:true});if(!up.error){const url=sb.storage.from('avatars').getPublicUrl(path).data.publicUrl+'?t='+Date.now();const {error:ae}=await sb.rpc('set_my_avatar',{p_url:url});if(!ae)d={...d,avatar_url:url}}}}catch(e){}
+   try{const mp=normPhone(session.user.user_metadata&&session.user.user_metadata.phone);if(mp&&!normPhone(d.phone)){await sb.rpc('set_my_phone',{p_phone:mp});d={...d,phone:mp}}}catch(e){}
    if(off)return;setUser(d);return}await new Promise(r=>setTimeout(r,500))}
    setMsg('Account profile not found. Ask your manager for help.');sb.auth.signOut()})();
   return()=>{off=true}},[uid,session===undefined]);
@@ -1032,7 +1105,9 @@ function App(){
  const fail=()=>setMsg('Something went wrong. Check your connection and try again.');
  const act={
   toast:setMsg,
+  missed:r=>{note('⚠️ '+r.client+' says the collector did not come for '+r.addr+(r.worker?' (assigned to '+r.worker+')':'')+'.');setMsg('The manager has been told. Thank you for your patience.')},
   rate:(r,n)=>{try{const m=getRated();m[r.id]=n;localStorage.setItem('rated_jobs',JSON.stringify(m))}catch(e){}note(`${r.client} rated ${r.worker} ${n}/5 for the pickup at ${r.addr}.`);setMsg('Thanks for your feedback.')},
+  near:(r,m)=>{try{const k='near_w_'+r.id;if(localStorage.getItem(k))return;localStorage.setItem(k,'1')}catch(e){}note(`${r.worker||'Collector'} is about ${m} min from ${r.addr}.`)},
   del:async ids=>{ids=[].concat(ids);let gone=[];
    for(let i=0;i<ids.length;i+=40){const part=ids.slice(i,i+40);
     const {data,error}=await sb.from('requests').delete().in('id',part).select('id');
@@ -1102,14 +1177,19 @@ function App(){
   const {error}=await sb.rpc('set_my_nrc',{p_nrc:v});
   if(error)return setMsg(((error.message||'').toLowerCase().includes('already'))?'This NRC is already registered to another account.':'Could not save NRC. Run nrc.sql in Supabase once.');
   setUser(u=>({...u,nrc:v}));setMsg('NRC saved and locked to your account.')};
- const ui={pushOn,enablePush,logout,setAvatar,saveNrc};
- return <PeopleCtx.Provider value={{people,open:setSheet}}><div className="wrap">
+ const savePhone=async v=>{const n=normPhone(v);if(!n)return setMsg('Enter a valid phone number like 0971234567.');
+  const {error}=await sb.rpc('set_my_phone',{p_phone:n});
+  if(error)return setMsg('Could not save the number. Run phone-contact.sql in Supabase once.');
+  setUser(u=>({...u,phone:n}));setMsg('Phone number saved.')};
+ const ui={pushOn,enablePush,logout,setAvatar,saveNrc,savePhone};
+ return <PeopleCtx.Provider value={{people,open:setSheet,me:user.id,meName:user.name,role:user.role}}><div className="wrap">
   {!online&&<div className="offline" role="alert">You are offline. Reconnect to send updates.</div>}
   <header><div className="brand">{LOGO}{BRAND}</div>
    <div className="hr"><button className="ibtn" aria-label="Switch light or dark theme" onClick={()=>setTheme(dark?'light':'dark')}><Ic n={dark?'sun':'moon'} s={18}/></button>
     {user.role==='manager'?<div style={{textAlign:'right'}}><div className="mute">{user.name} · {ROLE[user.role]}</div><button className="btn alt sm" onClick={logout}>Log out</button></div>:<Av u={user} cls="sm"/>}</div></header>
   {PUSH&&!pushOn&&<div className="card row" style={{alignItems:'center'}}><span>Get alerts on this phone, even when the app is closed.</span><button className="btn sm" onClick={enablePush}>Turn on alerts</button></div>}
   {user.role==='manager'&&unread>0&&<div className="card" role="status"><b>{unread} new notification{unread>1?'s':''}</b></div>}
+  {!normPhone(user.phone)&&<div className="card" role="status"><b>Add your phone number</b><div className="mute" style={{margin:'4px 0 10px'}}>So your {user.role==='worker'?'customers':user.role==='manager'?'team and clients':'collector'} can call or WhatsApp you, and you can call or WhatsApp them.</div><PhoneEdit user={user} ui={ui}/></div>}
   {user.role==='client'&&<Client st={st} act={act} user={user} ui={ui}/>}
   {user.role==='worker'&&<Worker st={st} act={act} user={user} ui={ui}/>}
   {user.role==='manager'&&<Manager st={st} act={act} users={users} me={user.id}/>}
@@ -1118,6 +1198,40 @@ function App(){
  </div></PeopleCtx.Provider>
 }
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+<script>
+/* ===== Language option: Chichewa/Nyanja, Bemba, Tonga =====
+   Add or fix translations in the L (screen text) and V (voice) tables below.
+   Anything missing falls back to English. Have a native speaker review before launch. */
+(function(){
+var L={
+ ny:{'Log in':'Lowani','Log out':'Tulukani','Create account':'Tsegulani akaunti','Request pickup':'Pemphani kuti atenge zinyalala','Accept pickup':'Landirani ntchito','Reject':'Kanani','Cancel':'Siyani','Cancel pickup':'Siyani kutenga','✖ Cancel pickup':'✖ Siyani kutenga','Close':'Tsekani','Confirm':'Tsimikizani','← Back':'← Bwererani','Call':'Imbani','📞 Call':'📞 Imbani','Navigate in Maps':'Pitani ndi Mapu','🔊 Start voice directions':'🔊 Yambani malangizo a mawu','🔇 Stop voice':'🔇 Imitsani mawu','🔁 Repeat':'🔁 Bwerezani','📍 Use my GPS location':'📍 Gwiritsani ntchito malo anga','Save password':'Sungani chinsinsi','Skip':'Dumphani','Next tip →':'Langizo lina →','← Prev':'← M\u2019mbuyo','Mark all read':'Onetsani zonse zawerengedwa','Install app':'Ikani pulogalamu','🗑 Delete':'🗑 Fufutani','Remove':'Chotsani','Recenter':'Bwezerani pakati','⬇ Export CSV':'⬇ Tengani CSV','Turn on alerts':'Yatsani zidziwitso','Find collector now':'Pezani wotolera tsopano'},
+ bem:{'Log in':'Ingileni','Log out':'Fumeni'},
+ toi:{'Log in':'Njilani','Log out':'Zwanini'}
+};
+var V={ny:[['You have arrived at your destination','Mwafika pamene mukupita'],['GPS signal is weak','Chizindikiro cha GPS ndi chofooka'],['Voice directions on','Malangizo a mawu ayatsidwa'],['Route found','Njira yapezeka'],['Rerouting','Tikusintha njira'],['Turn slightly left','Tembenukirani pang\u2019ono kumanzere'],['Turn slightly right','Tembenukirani pang\u2019ono kumanja'],['Turn left','Tembenukirani kumanzere'],['Turn right','Tembenukirani kumanja'],['Continue straight','Pitirizani molunjika'],[' kilometres',' makilomita'],[' metres',' mita'],[' minutes',' mphindi'],[' now',' tsopano'],['In ','Pakatha ']]};
+var CODE={ny:'ny',bem:'bem',toi:'toi'};
+var cur='en';try{cur=localStorage.getItem('rt_lang')||'en'}catch(e){}
+var seen=new WeakMap();
+function tx(n){var v=n.nodeValue,m=seen.get(n);if(m&&v===m.out)return;var src=v,k=src.trim(),out=src;
+ if(cur!=='en'&&k&&L[cur]&&L[cur][k])out=src.replace(k,L[cur][k]);
+ seen.set(n,{src:src,out:out});if(out!==v)n.nodeValue=out}
+function restore(n){var m=seen.get(n);if(m&&n.nodeValue===m.out){n.nodeValue=m.src;seen.delete(n)}}
+function walk(root,f){var w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),n;while(n=w.nextNode())f(n)}
+function apply(){if(cur==='en')walk(document.body,restore);else walk(document.body,tx)}
+var busy=false;new MutationObserver(function(ms){if(cur==='en'||busy)return;busy=true;
+ ms.forEach(function(m){if(m.type==='characterData')tx(m.target);else m.addedNodes.forEach(function(a){if(a.nodeType===3)tx(a);else if(a.nodeType===1)walk(a,tx)})});busy=false
+}).observe(document.documentElement,{childList:true,subtree:true,characterData:true});
+function vt(t){var r=V[cur];if(!r)return t;t=String(t);r.forEach(function(p){t=t.split(p[0]).join(p[1])});return t}
+if(window.speechSynthesis){var sp=SpeechSynthesis.prototype.speak;SpeechSynthesis.prototype.speak=function(u){try{if(V[cur]){u.text=vt(u.text);u.lang=CODE[cur]}}catch(e){}return sp.call(this,u)}}
+function hookAndroid(){var a=window.AndroidTTS;if(a&&a.speak&&!a.__l){var o=a.speak.bind(a);a.speak=function(t){return o(vt(t))};a.__l=1}}
+hookAndroid();setTimeout(hookAndroid,1500);
+var s=document.createElement('select');s.setAttribute('aria-label','Language');
+s.style.cssText='position:fixed;bottom:10px;left:10px;z-index:9999;padding:6px 8px;border-radius:10px;border:1px solid #8884;background:#fffd;color:#111;font-size:13px';
+[['en','English'],['ny','Chichewa / Nyanja'],['bem','Bemba'],['toi','Tonga']].forEach(function(o){var e=document.createElement('option');e.value=o[0];e.textContent='🌐 '+o[1];s.appendChild(e)});
+s.value=cur;s.onchange=function(){cur=s.value;try{localStorage.setItem('rt_lang',cur)}catch(e){}apply()};
+document.body.appendChild(s);setTimeout(apply,600);setTimeout(apply,2500);
+})();
 </script>
 </body>
 </html>
